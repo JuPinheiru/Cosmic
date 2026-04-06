@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>WZ Editor — Skills</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; color: #eee; font-family: Arial, sans-serif; }
+header { background: #16213e; padding: 14px 32px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #e94560; }
+header h1 { color: #e94560; font-size: 20px; }
+header a { color: #aaa; font-size: 12px; text-decoration: none; }
+header a:hover { color: #e94560; }
+.layout { display: flex; height: calc(100vh - 53px); }
+.sidebar { width: 220px; background: #16213e; border-right: 1px solid #333; overflow-y: auto; flex-shrink: 0; }
+.sidebar-title { padding: 10px 14px; font-size: 11px; color: #aaa; text-transform: uppercase; border-bottom: 1px solid #333; }
+.job-item { padding: 8px 14px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #1a1a2e; transition: background 0.1s; }
+.job-item:hover { background: #0f3460; }
+.job-item.active { background: #e94560; color: white; }
+.main { flex: 1; overflow-y: auto; padding: 20px 28px; }
+.search-bar { display: flex; gap: 10px; margin-bottom: 16px; }
+input[type=text] { background: #0f3460; color: #eee; border: 1px solid #444; padding: 8px 12px; border-radius: 6px; font-size: 13px; flex: 1; }
+input[type=text]:focus { outline: none; border-color: #e94560; }
+.skill-card { background: #16213e; border: 1px solid #333; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.skill-header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #333; }
+.skill-header:hover { background: #0f3460; }
+.skill-id { font-size: 9px; color: #555; }
+.skill-name { font-size: 13px; font-weight: bold; color: #eee; flex: 1; }
+.skill-levels { display: none; padding: 10px 14px; }
+.skill-card.open .skill-levels { display: block; }
+.skill-card.open .skill-header { background: #0f3460; }
+.level-tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+.level-tab { background: #0f3460; border: 1px solid #333; color: #aaa; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.level-tab.active { background: #e94560; border-color: #e94560; color: white; }
+.props-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.prop-field { background: #0f3460; border-radius: 6px; padding: 6px 8px; }
+.prop-label { font-size: 9px; color: #aaa; margin-bottom: 3px; }
+.prop-input { display: flex; gap: 4px; align-items: center; }
+.prop-input input { background: transparent; border: none; color: #f39c12; font-size: 13px; font-weight: bold; width: 100%; }
+.prop-input input:focus { outline: none; }
+.save-btn { background: #e94560; border: none; color: white; border-radius: 4px; padding: 2px 8px; font-size: 10px; cursor: pointer; white-space: nowrap; }
+.save-btn:hover { background: #c73652; }
+.save-btn.saved { background: #27ae60; }
+.loading { text-align: center; padding: 40px; color: #aaa; }
+.arrow { color: #555; font-size: 12px; transition: transform 0.2s; }
+.skill-card.open .arrow { transform: rotate(90deg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔮 Skills Editor</h1>
+  <a href="/">← Voltar</a>
+</header>
+<div class="layout">
+  <div class="sidebar">
+    <div class="sidebar-title">Jobs</div>
+    <div id="job-list"><div class="loading" style="padding:20px;font-size:12px;">Carregando...</div></div>
+  </div>
+  <div class="main">
+    <div class="search-bar">
+      <input type="text" id="skill-search" placeholder="Filtrar skills por nome ou ID...">
+    </div>
+    <div id="skill-list"><div class="loading">Selecione um job na lista.</div></div>
+  </div>
+</div>
+
+<script>
+var currentJob = null, allSkills = [], curLevels = {};
+
+fetch('/api/skills/jobs').then(function(r){return r.json();}).then(function(d){
+    var html = '';
+    d.jobs.forEach(function(j){
+        html += '<div class="job-item" data-id="'+j.id+'">'+j.name+'</div>';
+    });
+    document.getElementById('job-list').innerHTML = html;
+    document.querySelectorAll('.job-item').forEach(function(el){
+        el.addEventListener('click', function(){ loadJob(el.dataset.id, el); });
+    });
+});
+
+document.getElementById('skill-search').addEventListener('input', function(){
+    renderSkills(this.value.toLowerCase());
+});
+
+function loadJob(jobId, el) {
+    currentJob = jobId;
+    document.querySelectorAll('.job-item').forEach(function(e){ e.classList.remove('active'); });
+    el.classList.add('active');
+    document.getElementById('skill-list').innerHTML = '<div class="loading">Carregando skills...</div>';
+    fetch('/api/skills/'+jobId).then(function(r){return r.json();}).then(function(d){
+        allSkills = d.skills || [];
+        curLevels = {};
+        renderSkills(document.getElementById('skill-search').value.toLowerCase());
+    });
+}
+
+function renderSkills(filter) {
+    var list = filter ? allSkills.filter(function(s){
+        return s.name.toLowerCase().indexOf(filter) >= 0 || s.id.indexOf(filter) >= 0;
+    }) : allSkills;
+
+    if (!list.length) { document.getElementById('skill-list').innerHTML = '<div class="loading">Nenhuma skill encontrada.</div>'; return; }
+
+    var html = '';
+    list.forEach(function(skill){
+        var lvl = curLevels[skill.id] || (skill.levels[0] && skill.levels[0].level) || '1';
+        html += '<div class="skill-card" id="sc-'+skill.id+'">';
+        html += '<div class="skill-header" onclick="toggleSkill(\''+skill.id+'\')">';
+        html += '<span class="arrow">▶</span>';
+        html += '<img src="https://maplestory.io/api/GMS/83/skill/'+parseInt(skill.id)+'/icon" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+        html += '<span class="skill-name">'+skill.name+'</span>';
+        html += '<span class="skill-id">'+skill.id+'</span>';
+        html += '</div>';
+        html += '<div class="skill-levels">';
+
+        // Tabs de nível
+        html += '<div class="level-tabs">';
+        skill.levels.forEach(function(lv){
+            html += '<div class="level-tab'+(lv.level===lvl?' active':'')+'" onclick="selectLevel(\''+skill.id+'\',\''+lv.level+'\')">Lv '+lv.level+'</div>';
+        });
+        html += '</div>';
+
+        // Props do nível atual
+        var lvlData = skill.levels.find(function(l){ return l.level === lvl; }) || skill.levels[0];
+        if (lvlData) {
+            html += '<div class="props-grid" id="props-'+skill.id+'">';
+            Object.keys(lvlData.props).forEach(function(field){
+                var p = lvlData.props[field];
+                html += '<div class="prop-field">';
+                html += '<div class="prop-label">'+field+'</div>';
+                html += '<div class="prop-input">';
+                html += '<input type="number" id="inp-'+skill.id+'-'+field+'" value="'+p.value+'">';
+                html += '<button class="save-btn" onclick="saveSkill(\''+skill.id+'\',\''+field+'\')">✓</button>';
+                html += '</div></div>';
+            });
+            html += '</div>';
+        }
+        html += '</div></div>';
+    });
+    document.getElementById('skill-list').innerHTML = html;
+}
+
+function toggleSkill(skillId) {
+    var card = document.getElementById('sc-'+skillId);
+    card.classList.toggle('open');
+}
+
+function selectLevel(skillId, level) {
+    curLevels[skillId] = level;
+    var skill = allSkills.find(function(s){ return s.id === skillId; });
+    if (!skill) return;
+
+    // Atualiza tabs
+    var card = document.getElementById('sc-'+skillId);
+    card.querySelectorAll('.level-tab').forEach(function(t){
+        t.classList.toggle('active', t.textContent.trim() === 'Lv '+level);
+    });
+
+    // Atualiza props
+    var lvlData = skill.levels.find(function(l){ return l.level === level; });
+    if (!lvlData) return;
+    var propsEl = document.getElementById('props-'+skillId);
+    if (!propsEl) return;
+
+    var html = '';
+    Object.keys(lvlData.props).forEach(function(field){
+        var p = lvlData.props[field];
+        html += '<div class="prop-field">';
+        html += '<div class="prop-label">'+field+'</div>';
+        html += '<div class="prop-input">';
+        html += '<input type="number" id="inp-'+skillId+'-'+field+'" value="'+p.value+'">';
+        html += '<button class="save-btn" onclick="saveSkill(\''+skillId+'\',\''+field+'\')">✓</button>';
+        html += '</div></div>';
+    });
+    propsEl.innerHTML = html;
+}
+
+function saveSkill(skillId, field) {
+    var level = curLevels[skillId] || '1';
+    var inp = document.getElementById('inp-'+skillId+'-'+field);
+    var btn = inp.parentElement.querySelector('.save-btn');
+    var value = inp.value;
+    btn.textContent = '...'; btn.disabled = true;
+
+    fetch('/api/skills/update', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({job_id: currentJob, skill_id: skillId, level: level, field: field, value: value})
+    }).then(function(r){return r.json();}).then(function(resp){
+        if (resp.ok) { btn.textContent = '✓'; btn.classList.add('saved'); }
+        else { btn.textContent = '✗'; btn.style.background = '#e94560'; }
+        btn.disabled = false;
+        setTimeout(function(){ btn.textContent = '✓'; btn.classList.remove('saved'); btn.style.background = ''; }, 1500);
+    });
+}
+</script>
+</body>
+</html>

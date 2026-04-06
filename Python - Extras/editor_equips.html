@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>WZ Editor — Equips</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; color: #eee; font-family: Arial, sans-serif; }
+header { background: #16213e; padding: 14px 32px; display: flex; align-items: center; gap: 16px; border-bottom: 2px solid #e94560; }
+header h1 { color: #e94560; font-size: 20px; }
+header a { color: #aaa; font-size: 12px; text-decoration: none; }
+header a:hover { color: #e94560; }
+.container { padding: 24px 32px; max-width: 1000px; margin: 0 auto; }
+.search-area { display: flex; gap: 10px; margin-bottom: 20px; }
+input[type=text] { background: #0f3460; color: #eee; border: 1px solid #444; padding: 9px 14px; border-radius: 6px; font-size: 14px; flex: 1; }
+input[type=text]:focus { outline: none; border-color: #e94560; }
+.results { background: #16213e; border: 1px solid #333; border-radius: 8px; max-height: 220px; overflow-y: auto; display: none; margin-bottom: 20px; }
+.result-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; border-bottom: 1px solid #1a1a2e; }
+.result-item:hover { background: #0f3460; }
+.equip-card { background: #16213e; border: 1px solid #333; border-radius: 10px; padding: 20px; }
+.equip-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; border-bottom: 1px solid #333; padding-bottom: 16px; }
+.equip-header img { width: 56px; height: 56px; object-fit: contain; image-rendering: pixelated; }
+.equip-header h2 { color: #e94560; font-size: 20px; }
+.equip-header .meta { font-size: 11px; color: #555; }
+.section-title { font-size: 11px; font-weight: bold; color: #aaa; text-transform: uppercase; margin: 14px 0 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+.props-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.prop-field { background: #0f3460; border-radius: 6px; padding: 7px 10px; }
+.prop-label { font-size: 9px; color: #aaa; margin-bottom: 3px; }
+.prop-row { display: flex; gap: 5px; align-items: center; }
+.prop-row input { background: transparent; border: none; border-bottom: 1px solid #444; color: #f39c12; font-size: 13px; font-weight: bold; width: 100%; padding: 2px 0; }
+.prop-row input:focus { outline: none; border-color: #e94560; }
+.prop-row input.req { color: #3498db; }
+.btn { background: #e94560; border: none; color: white; border-radius: 4px; padding: 3px 8px; font-size: 10px; cursor: pointer; }
+.btn:hover { background: #c73652; }
+.btn.saved { background: #27ae60; }
+.loading { text-align: center; padding: 40px; color: #aaa; }
+.empty { color: #555; font-size: 13px; padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎽 Equips Editor</h1>
+  <a href="/">← Voltar</a>
+</header>
+<div class="container">
+  <div class="search-area">
+    <input type="text" id="equip-search" placeholder="Buscar equip por nome ou ID...">
+  </div>
+  <div class="results" id="equip-results"></div>
+  <div id="equip-detail"><div class="empty">Busque e selecione um equip acima.</div></div>
+</div>
+
+<script>
+var searchTimer = null, currentEquip = null;
+
+document.getElementById('equip-search').addEventListener('input', function(){
+    clearTimeout(searchTimer);
+    var q = this.value.trim();
+    if (q.length < 2) { document.getElementById('equip-results').style.display = 'none'; return; }
+    searchTimer = setTimeout(function(){
+        fetch('/api/equips/search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(d){
+            var box = document.getElementById('equip-results');
+            if (!d.equips.length) { box.style.display = 'none'; return; }
+            box.innerHTML = d.equips.map(function(e){
+                return '<div class="result-item" data-id="'+e.id+'">'
+                    +'<img src="https://maplestory.io/api/GMS/83/item/'+e.id+'/icon" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">'
+                    +'<div><div style="font-size:13px;">'+e.name+'</div><div style="font-size:9px;color:#555;">ID: '+e.id+'</div></div>'
+                    +'</div>';
+            }).join('');
+            box.style.display = 'block';
+            box.querySelectorAll('.result-item').forEach(function(el){
+                el.addEventListener('click', function(){
+                    document.getElementById('equip-search').value = el.querySelector('div > div').textContent;
+                    box.style.display = 'none';
+                    loadEquip(el.dataset.id);
+                });
+            });
+        });
+    }, 300);
+});
+
+function loadEquip(itemId) {
+    document.getElementById('equip-detail').innerHTML = '<div class="loading">Carregando...</div>';
+    fetch('/api/equips/'+itemId).then(function(r){return r.json();}).then(function(d){
+        if (d.error) { document.getElementById('equip-detail').innerHTML = '<div class="empty">'+d.error+'</div>'; return; }
+        currentEquip = d;
+        renderEquip(d);
+    });
+}
+
+function renderEquip(d) {
+    // Agrupa campos por seção
+    var sections = {
+        'Requisitos': ['reqLevel', 'reqJob', 'reqSTR', 'reqDEX', 'reqINT', 'reqLUK'],
+        'Stats': ['incSTR', 'incDEX', 'incINT', 'incLUK', 'incPAD', 'incMAD', 'incPDD', 'incMDD', 'incACC', 'incEVA', 'incMHP', 'incMMP', 'incSpeed', 'incJump'],
+        'Outros': ['tuc', 'attackSpeed', 'cash']
+    };
+
+    var html = '<div class="equip-card">';
+    html += '<div class="equip-header">';
+    html += '<img src="https://maplestory.io/api/GMS/83/item/'+d.id+'/icon" onerror="this.style.opacity=0.2">';
+    html += '<div><h2>'+d.name+'</h2><div class="meta">ID: '+d.id+' | '+d.category+'</div></div>';
+    html += '</div>';
+
+    Object.keys(sections).forEach(function(secName){
+        var fields = sections[secName].filter(function(f){ return d.props[f] !== undefined; });
+        if (!fields.length) return;
+        html += '<div class="section-title">'+secName+'</div>';
+        html += '<div class="props-grid">';
+        fields.forEach(function(field){
+            var p = d.props[field];
+            var isReq = field.startsWith('req');
+            var color = isReq ? '#3498db' : '#27ae60';
+            if (field === 'tuc') color = '#f39c12';
+            html += '<div class="prop-field">';
+            html += '<div class="prop-label">'+field+'</div>';
+            html += '<div class="prop-row">';
+            html += '<input type="number" id="eq-'+field+'" value="'+p.value+'" style="color:'+color+'">';
+            html += '<button class="btn" onclick="saveEquip(\''+field+'\')">✓</button>';
+            html += '</div></div>';
+        });
+        html += '</div>';
+    });
+
+    // Campos não agrupados
+    var allGrouped = Object.values(sections).reduce(function(a,b){ return a.concat(b); }, []);
+    var extra = Object.keys(d.props).filter(function(f){ return allGrouped.indexOf(f) < 0; });
+    if (extra.length) {
+        html += '<div class="section-title">Outros campos</div><div class="props-grid">';
+        extra.forEach(function(field){
+            var p = d.props[field];
+            html += '<div class="prop-field"><div class="prop-label">'+field+'</div>';
+            html += '<div class="prop-row"><input type="number" id="eq-'+field+'" value="'+p.value+'">';
+            html += '<button class="btn" onclick="saveEquip(\''+field+'\')">✓</button></div></div>';
+        });
+        html += '</div>';
+    }
+
+    html += '</div>';
+    document.getElementById('equip-detail').innerHTML = html;
+}
+
+function saveEquip(field) {
+    var inp = document.getElementById('eq-'+field);
+    var btn = inp.parentElement.querySelector('.btn');
+    btn.textContent = '...'; btn.disabled = true;
+
+    fetch('/api/equips/update', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({item_id: currentEquip.id, field: field, value: inp.value})
+    }).then(function(r){return r.json();}).then(function(resp){
+        if (resp.ok) { btn.classList.add('saved'); btn.textContent = '✓'; }
+        else { btn.textContent = '✗'; }
+        btn.disabled = false;
+        setTimeout(function(){ btn.classList.remove('saved'); btn.textContent = '✓'; }, 1500);
+    });
+}
+</script>
+</body>
+</html>

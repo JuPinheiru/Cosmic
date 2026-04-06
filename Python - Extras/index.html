@@ -1,0 +1,1628 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Collection Viewer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #1a1a2e; color: #eee; font-family: Arial, sans-serif; }
+header { background: #16213e; padding: 16px 40px; display: flex; align-items: center; gap: 20px; border-bottom: 2px solid #e94560; }
+header h1 { color: #e94560; font-size: 22px; }
+header span { color: #aaa; font-size: 14px; }
+.tabs { background: #16213e; display: flex; border-bottom: 2px solid #e94560; }
+.tab { padding: 12px 28px; cursor: pointer; color: #aaa; font-size: 15px; border-bottom: 3px solid transparent; transition: all 0.2s; }
+.tab:hover { color: #eee; background: #0f3460; }
+.tab.active { color: #e94560; border-bottom-color: #e94560; background: #1a1a2e; }
+.controls { padding: 16px 40px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center; background: #16213e; border-bottom: 1px solid #333; }
+select, input { background: #0f3460; color: #eee; border: 1px solid #e94560; padding: 8px 14px; border-radius: 6px; font-size: 14px; }
+.btn { background: #e94560; color: white; border: none; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.btn:hover { background: #c73652; }
+.btn.active { background: #27ae60; }
+.stats-bar { padding: 14px 40px; display: flex; gap: 30px; background: #0f3460; border-bottom: 1px solid #333; flex-wrap: wrap; }
+.stat { text-align: center; }
+.stat .value { font-size: 20px; font-weight: bold; color: #e94560; }
+.stat .label { font-size: 11px; color: #aaa; }
+.progress-bar { background: #333; border-radius: 4px; height: 8px; width: 180px; margin-top: 6px; }
+.progress-fill { background: #e94560; height: 100%; border-radius: 4px; transition: width 0.3s; }
+.accounts-list { padding: 12px 40px; display: flex; gap: 8px; flex-wrap: wrap; background: #16213e; border-bottom: 1px solid #333; }
+.account-btn { background: #0f3460; border: 1px solid #333; color: #eee; padding: 5px 12px; border-radius: 20px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+.account-btn:hover, .account-btn.active { background: #e94560; border-color: #e94560; }
+.grid { display: flex; flex-wrap: wrap; gap: 10px; padding: 20px 40px; }
+.item-card { background: #16213e; border: 1px solid #333; border-radius: 8px; width: 88px; padding: 7px; text-align: center; cursor: pointer; transition: border-color 0.2s, transform 0.1s; position: relative; }
+.item-card:hover { border-color: #e94560; transform: scale(1.05); }
+.item-card.collected { border-color: #27ae60; background: #1a2e1a; }
+.item-card.maxed { border-color: #f39c12; background: #2e2a1a; }
+.item-card.not-collected { opacity: 0.35; }
+.item-card img { width: 50px; height: 50px; object-fit: contain; image-rendering: pixelated; }
+.item-name { font-size: 9px; color: #ccc; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-id { font-size: 8px; color: #555; }
+.badge { position: absolute; top: 3px; right: 3px; border-radius: 50%; width: 15px; height: 15px; font-size: 9px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+.badge.green { background: #27ae60; color: white; }
+.badge.gold { background: #f39c12; color: white; }
+.level-bar { display: flex; gap: 2px; justify-content: center; margin-top: 3px; }
+.level-dot { width: 8px; height: 8px; border-radius: 50%; background: #333; }
+.level-dot.filled { background: #f39c12; }
+.mob-card { background: #16213e; border: 1px solid #333; border-radius: 8px; width: 130px; padding: 10px; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+.mob-card:hover { border-color: #e94560; }
+.mob-card img { width: 60px; height: 60px; object-fit: contain; image-rendering: pixelated; }
+.mob-drops { font-size: 9px; color: #888; margin-top: 4px; }
+.loading { text-align: center; padding: 60px; color: #aaa; font-size: 18px; }
+.tooltip { position: fixed; background: #0f3460; border: 1px solid #e94560; border-radius: 8px; padding: 10px 14px; font-size: 12px; pointer-events: none; z-index: 1000; display: none; max-width: 280px; }
+.section { display: none; }
+.section.active { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Collection Viewer</h1>
+  <span id="header-info">Carregando...</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" id="tab-equip">Equipamentos</div>
+  <div class="tab" id="tab-cards">Cartas</div>
+  <div class="tab" id="tab-mobs">Monstros</div>
+  <div class="tab" id="tab-quests">Quests</div>
+  <div class="tab" id="tab-chars">Personagens</div>
+  <div class="tab" id="tab-damage">Damage Meter</div>
+  <div class="tab" id="tab-scrolls">Scrolls</div>
+</div>
+
+<!-- EQUIPAMENTOS -->
+<div class="section active" id="sec-equip">
+  <div class="controls">
+    <select id="cat">
+      <option value="all">Todos</option>
+      <option value="Weapon">Weapon</option>
+      <option value="Cap">Cap</option>
+      <option value="Coat">Coat</option>
+      <option value="Pants">Pants</option>
+      <option value="Shoes">Shoes</option>
+      <option value="Glove">Glove</option>
+      <option value="Cape">Cape</option>
+      <option value="Shield">Shield</option>
+      <option value="Accessory">Accessory</option>
+      <option value="Ring">Ring</option>
+    </select>
+    <input type="text" id="eq-search" placeholder="Buscar item..." style="width:180px">
+    <button class="btn active" id="btn-all">Todos</button>
+    <button class="btn" id="btn-collected">Coletados</button>
+    <button class="btn" id="btn-missing">Faltando</button>
+  </div>
+  <div class="accounts-list" id="eq-accs"></div>
+  <div class="stats-bar">
+    <div class="stat"><div class="value" id="eq-total">-</div><div class="label">Total</div></div>
+    <div class="stat"><div class="value" id="eq-col">-</div><div class="label">Coletados</div></div>
+    <div class="stat"><div class="value" id="eq-mis">-</div><div class="label">Faltando</div></div>
+    <div class="stat"><div class="value" id="eq-bon">-</div><div class="label">Bonus Stats</div></div>
+    <div class="stat">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="value" id="eq-pct">0%</div>
+        <div class="progress-bar"><div class="progress-fill" id="eq-prog" style="width:0%"></div></div>
+      </div>
+      <div class="label">Progresso</div>
+    </div>
+  </div>
+  <div class="grid" id="eq-grid"><div class="loading">Carregando...</div></div>
+</div>
+
+<!-- CARTAS -->
+<div class="section" id="sec-cards">
+  <div class="controls">
+    <input type="text" id="card-search" placeholder="Buscar carta..." style="width:180px">
+    <button class="btn active" id="cbtn-all">Todas</button>
+    <button class="btn" id="cbtn-maxed">Nivel 5</button>
+    <button class="btn" id="cbtn-partial">Parciais</button>
+    <button class="btn" id="cbtn-missing">Faltando</button>
+  </div>
+  <div class="accounts-list" id="card-accs"></div>
+  <div class="stats-bar">
+    <div class="stat"><div class="value" id="card-total">-</div><div class="label">Total Cartas</div></div>
+    <div class="stat"><div class="value" id="card-col">-</div><div class="label">Coletadas</div></div>
+    <div class="stat"><div class="value" id="card-maxed">-</div><div class="label">Nivel 5</div></div>
+    <div class="stat"><div class="value" id="card-stats-bon" style="color:#27ae60">-</div><div class="label">Bonus Stats</div></div>
+    <div class="stat"><div class="value" id="card-exp-bon" style="color:#f39c12">-</div><div class="label">Bonus EXP</div></div>
+    <div class="stat">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="value" id="card-pct">0%</div>
+        <div class="progress-bar"><div class="progress-fill" id="card-prog" style="width:0%"></div></div>
+      </div>
+      <div class="label">Progresso</div>
+    </div>
+  </div>
+  <div class="grid" id="card-grid"><div class="loading">Carregando...</div></div>
+</div>
+
+<!-- MONSTROS -->
+<div class="section" id="sec-mobs">
+  <div class="controls">
+    <input type="text" id="mob-search" placeholder="Buscar monstro..." style="width:180px">
+  </div>
+  <div class="stats-bar">
+    <div class="stat"><div class="value" id="mob-total">-</div><div class="label">Total Monstros</div></div>
+  </div>
+  <div class="grid" id="mob-grid"><div class="loading">Carregando...</div></div>
+</div>
+
+<!-- DAMAGE METER -->
+<div class="section" id="sec-damage">
+  <div class="controls">
+    <button class="btn active" id="dmg-btn-live">&#9679; Live</button>
+    <button class="btn" id="dmg-btn-history">Historico</button>
+    <button class="btn" id="dmg-btn-reset" style="background:#e94560;border-color:#e94560;">Reset Sessao</button>
+  </div>
+  <div id="damage-content" style="padding:20px 40px;">
+    <div class="loading">Conectando...</div>
+  </div>
+</div>
+
+<!-- PERSONAGENS -->
+<div class="section" id="sec-chars">
+  <div class="accounts-list" id="char-accs"></div>
+  <div id="char-content" style="padding:20px 40px;"><div class="loading">Selecione uma conta.</div></div>
+</div>
+
+<!-- QUESTS -->
+<div class="section" id="sec-quests">
+  <div class="controls">
+    <input type="text" id="quest-search" placeholder="Buscar quest..." style="width:180px">
+    <button class="btn active" id="qbtn-all">Todas</button>
+    <button class="btn" id="qbtn-completed">Concluidas</button>
+    <button class="btn" id="qbtn-progress">Em andamento</button>
+    <button class="btn" id="qbtn-missing">Faltando</button>
+  </div>
+  <div class="accounts-list" id="quest-accs"></div>
+  <div class="stats-bar">
+    <div class="stat"><div class="value" id="q-total">-</div><div class="label">Total Server</div></div>
+    <div class="stat"><div class="value" id="q-completed">-</div><div class="label">Concluidas</div></div>
+    <div class="stat"><div class="value" id="q-progress">-</div><div class="label">Em andamento</div></div>
+    <div class="stat"><div class="value" id="q-missing">-</div><div class="label">Faltando</div></div>
+    <div class="stat"><div class="value" id="q-stats-bon" style="color:#27ae60">-</div><div class="label">Bonus Stats</div></div>
+    <div class="stat"><div class="value" id="q-exp-bon" style="color:#f39c12">-</div><div class="label">Bonus EXP</div></div>
+    <div class="stat">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="value" id="q-pct">0%</div>
+        <div class="progress-bar"><div class="progress-fill" id="q-prog" style="width:0%"></div></div>
+      </div>
+      <div class="label">Progresso</div>
+    </div>
+  </div>
+  <div class="grid" id="quest-grid" style="padding:20px 40px;flex-wrap:wrap;gap:8px;"><div class="loading">Carregando...</div></div>
+</div>
+
+<!-- SCROLLS -->
+<div class="section" id="sec-scrolls">
+  <div class="controls">
+    <input type="text" id="scroll-search" placeholder="Buscar scroll..." style="width:200px">
+    <button class="btn active" id="scroll-acc-all-btn">Todas as contas</button>
+  </div>
+  <div class="accounts-list" id="scroll-accs"></div>
+  <div class="stats-bar">
+    <div class="stat"><div class="value" id="scroll-total">-</div><div class="label">Total Scrolls</div></div>
+    <div class="stat"><div class="value" id="scroll-types">-</div><div class="label">Tipos</div></div>
+  </div>
+  <div class="grid" id="scroll-grid"><div class="loading">Carregando...</div></div>
+</div>
+
+<div class="tooltip" id="tip"></div>
+
+<script>
+var EQ = null, CARDS = null, MOBS = null, QUESTS = null, ALL_QUESTS = null, CHARS = null;
+var dmgWs = null, dmgMode = "live", dmgSelectedSession = null;
+var SCROLLS = null, curScrollAcc = null;
+var curEqAcc = null, curCardAcc = null;
+var curFilter = 'all', curCardFilter = 'all';
+
+// === TABS ===
+document.getElementById('tab-equip').addEventListener('click', function() { switchTab('equip'); });
+document.getElementById('tab-cards').addEventListener('click', function() { switchTab('cards'); });
+document.getElementById('tab-mobs').addEventListener('click', function() { switchTab('mobs'); });
+document.getElementById('tab-quests').addEventListener('click', function() { switchTab('quests'); });
+document.getElementById('tab-chars').addEventListener('click', function() { switchTab('chars'); });
+document.getElementById('tab-damage').addEventListener('click', function() { switchTab('damage'); });
+document.getElementById('tab-scrolls').addEventListener('click', function() { switchTab('scrolls'); });
+
+function switchTab(tab) {
+    var tabs = ['equip','cards','mobs','quests','chars','damage','scrolls'];
+    for (var i = 0; i < tabs.length; i++) {
+        document.getElementById('tab-' + tabs[i]).classList.remove('active');
+        document.getElementById('sec-' + tabs[i]).classList.remove('active');
+    }
+    document.getElementById('tab-' + tab).classList.add('active');
+    document.getElementById('sec-' + tab).classList.add('active');
+    if (tab == 'equip' && !EQ) loadEquip();
+    if (tab == 'cards' && !CARDS) loadCards();
+    if (tab == 'mobs' && !MOBS) loadMobs();
+    if (tab == 'quests' && !QUESTS) loadQuests();
+    if (tab == 'chars') loadCharsTab();
+    if (tab == 'damage') initDamageMeter();
+    if (tab == 'scrolls' && !SCROLLS) loadScrolls();
+}
+
+// === TOOLTIP ===
+function showEqTip(e, item) {
+    var t = document.getElementById('tip');
+    t.innerHTML = '<b>' + item.name + '</b><br>ID: ' + item.id + '<br><i style="color:#aaa;font-size:10px">Buscando drops...</i>';
+    t.style.display = 'block';
+    t.style.left = (e.clientX + 12) + 'px';
+    t.style.top = (e.clientY + 12) + 'px';
+    fetch('/api/item_sources/' + item.id).then(function(r){return r.json();}).then(function(d){
+        if (!document.getElementById('tip') || document.getElementById('tip').style.display == 'none') return;
+        var html = '<b>' + item.name + '</b><br><span style="color:#555;font-size:9px">ID: ' + item.id + '</span><br>';
+        if (d.drops.length == 0) {
+            html += '<i style="color:#aaa;font-size:10px">Sem drops conhecidos</i>';
+        } else {
+            html += '<div style="margin-top:6px;font-size:10px;color:#f39c12;font-weight:bold;">Dropa de:</div>';
+            for (var i = 0; i < Math.min(d.drops.length, 5); i++) {
+                var dr = d.drops[i];
+                var pct = (dr.chance / 100).toFixed(1) + '%';
+                var mobName = d.mob_names && d.mob_names[dr.mobid] ? d.mob_names[dr.mobid] : 'Mob ' + dr.mobid;
+                html += '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;">';
+                html += '<img src="https://maplestory.io/api/GMS/83/mob/' + dr.mobid + '/icon" style="width:24px;height:24px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">';
+                html += '<span>' + mobName + ' <span style="color:#f39c12">(' + pct + ')</span></span>';
+                html += '</div>';
+            }
+            if (d.drops.length > 5) html += '<div style="font-size:9px;color:#555;margin-top:4px;">+' + (d.drops.length-5) + ' outros mobs</div>';
+        }
+        document.getElementById('tip').innerHTML = html;
+    }).catch(function(){});
+}
+
+function showTip(e, a, b, c) {
+    var t = document.getElementById('tip');
+    t.innerHTML = '<b>' + a + '</b><br>' + b + '<br>' + c;
+    t.style.display = 'block';
+    t.style.left = (e.clientX + 12) + 'px';
+    t.style.top = (e.clientY + 12) + 'px';
+}
+function hideTip() { document.getElementById('tip').style.display = 'none'; }
+
+// === EQUIPAMENTOS ===
+function loadEquip() {
+    fetch('/api/collection').then(function(r) { return r.json(); }).then(function(d) {
+        EQ = d;
+        var html = '<button class="account-btn active" id="eq-acc-null">Todas</button>';
+        for (var i = 0; i < d.accounts.length; i++) {
+            var a = d.accounts[i];
+            html += '<button class="account-btn" id="eq-acc-' + a.id + '">' + a.name + ' (' + a.collected + ')</button>';
+        }
+        document.getElementById('eq-accs').innerHTML = html;
+        document.getElementById('eq-acc-null').addEventListener('click', function() { selEqAcc(null); });
+        for (var i = 0; i < d.accounts.length; i++) {
+            (function(acc) {
+                document.getElementById('eq-acc-' + acc.id).addEventListener('click', function() { selEqAcc(acc.id); });
+            })(d.accounts[i]);
+        }
+        renderEquip();
+    });
+}
+
+document.getElementById('btn-all').addEventListener('click', function() { setFilter('all'); });
+document.getElementById('btn-collected').addEventListener('click', function() { setFilter('collected'); });
+document.getElementById('btn-missing').addEventListener('click', function() { setFilter('missing'); });
+document.getElementById('cat').addEventListener('change', function() { renderEquip(); });
+document.getElementById('eq-search').addEventListener('input', function() { renderEquip(); });
+
+function selEqAcc(id) {
+    curEqAcc = id;
+    var bs = document.querySelectorAll('#eq-accs .account-btn');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.remove('active');
+    document.getElementById('eq-acc-' + id).classList.add('active');
+    renderEquip();
+}
+
+function setFilter(f) {
+    curFilter = f;
+    var ids = ['btn-all', 'btn-collected', 'btn-missing'];
+    for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).classList.remove('active');
+    document.getElementById('btn-' + f).classList.add('active');
+    renderEquip();
+}
+
+function getEqCol() {
+    var s = {};
+    if (curEqAcc === null) {
+        for (var i = 0; i < EQ.accounts.length; i++) {
+            var it = EQ.accounts[i].items;
+            for (var j = 0; j < it.length; j++) s[it[j]] = 1;
+        }
+    } else {
+        for (var i = 0; i < EQ.accounts.length; i++) {
+            if (EQ.accounts[i].id == curEqAcc) {
+                var it = EQ.accounts[i].items;
+                for (var j = 0; j < it.length; j++) s[it[j]] = 1;
+                break;
+            }
+        }
+    }
+    return s;
+}
+
+function getItemClass(itemId) {
+    var prefix = Math.floor(itemId / 10000);
+    var classMap = {
+        130:'Arma de 1 mao',131:'Arma de 1 mao',132:'Arma de 1 mao',133:'Arma de 1 mao',
+        134:'Arma de 1 mao',135:'Arma de 1 mao',136:'Arma de 1 mao',137:'Arma de 1 mao',
+        138:'Arma de 1 mao',139:'Arma de 1 mao',140:'Arma de 2 maos',141:'Arma de 2 maos',
+        142:'Arma de 2 maos',143:'Arma de 2 maos',144:'Arma de 2 maos',145:'Arma de 2 maos',
+        146:'Arma de 2 maos',147:'Arma de 2 maos',148:'Arma de 2 maos',149:'Arma de 2 maos',
+        150:'Arma de 2 maos',151:'Arma de 2 maos',152:'Arma de 2 maos',153:'Arma de 2 maos',
+        154:'Arma de 2 maos',155:'Arma de 2 maos',156:'Arma de 2 maos',157:'Arco/Besta',
+        158:'Arco/Besta',160:'Cajado',161:'Varinha',162:'Cajado',163:'Varinha',
+        164:'Lampada',165:'Nunchaku',166:'Garras',167:'Pistola',170:'Escudo',
+        100:'Chapeu',101:'Chapeu',102:'Chapeu',103:'Chapeu',104:'Chapeu',
+        105:'Top/Terno',106:'Bottom',107:'Sapato',108:'Luva',109:'Escudo',110:'Capa',
+        111:'Brinco',112:'Anel',113:'Pingente',114:'Medalha',115:'Belt',116:'Shoulder',
+        117:'Eye Acc',118:'Face Acc',119:'Pocket',120:'Eye Acc',121:'Badge',
+        122:'Android',123:'Heart',124:'Totem',125:'Emblem',126:'Emblem',
+        127:'Eye Acc',128:'Face Acc',129:'Shoulder'
+    };
+    return classMap[prefix] || 'Outros';
+}
+
+function getItemLevelRange(itemId) {
+    var prefix = Math.floor(itemId / 10000);
+    // Estimativa de level por ID
+    var sub = itemId % 10000;
+    if (sub < 1000) return 'Lv 1-30';
+    if (sub < 2000) return 'Lv 31-50';
+    if (sub < 3000) return 'Lv 51-70';
+    if (sub < 4000) return 'Lv 71-90';
+    if (sub < 5000) return 'Lv 91-110';
+    if (sub < 6000) return 'Lv 111-130';
+    if (sub < 7000) return 'Lv 131-150';
+    if (sub < 8000) return 'Lv 151-170';
+    return 'Lv 170+';
+}
+
+function renderEquip() {
+    if (!EQ) return;
+    var cat = document.getElementById('cat').value;
+    var srch = document.getElementById('eq-search').value.toLowerCase();
+    var col = getEqCol();
+    var list = [];
+    for (var i = 0; i < EQ.items.length; i++) {
+        var it = EQ.items[i];
+        if (cat != 'all' && it.category != cat) continue;
+        if (srch && it.name.toLowerCase().indexOf(srch) < 0 && ('' + it.id).indexOf(srch) < 0) continue;
+        if (curFilter == 'collected' && !col[it.id]) continue;
+        if (curFilter == 'missing' && col[it.id]) continue;
+        list.push(it);
+    }
+    var tot = list.length, c = 0;
+    for (var i = 0; i < list.length; i++) if (col[list[i].id]) c++;
+    var pct = tot > 0 ? Math.round(c / tot * 100) : 0;
+    document.getElementById('eq-total').textContent = tot;
+    document.getElementById('eq-col').textContent = c;
+    document.getElementById('eq-mis').textContent = tot - c;
+    document.getElementById('eq-prog').style.width = pct + '%';
+    document.getElementById('eq-pct').textContent = pct + '%';
+    if (curEqAcc !== null) {
+        for (var i = 0; i < EQ.accounts.length; i++) {
+            if (EQ.accounts[i].id == curEqAcc) {
+                document.getElementById('eq-bon').textContent = '+' + EQ.accounts[i].bonus;
+                document.getElementById('header-info').textContent = EQ.accounts[i].name;
+                break;
+            }
+        }
+    } else {
+        document.getElementById('eq-bon').textContent = '-';
+        document.getElementById('header-info').textContent = EQ.accounts.length + ' contas';
+    }
+
+    // Agrupa por category (vindo do item_names.sql)
+    var grouped = {};
+    var catOrder = [];
+    for (var i = 0; i < list.length; i++) {
+        var it = list[i];
+        var grpKey = it.category || 'Outros';
+        if (!grouped[grpKey]) {
+            grouped[grpKey] = { label: grpKey, items: [] };
+            catOrder.push(grpKey);
+        }
+        grouped[grpKey].items.push(it);
+    }
+    catOrder.sort(function(a,b) { return a.localeCompare(b); });
+
+    var html = '';
+    var allItems = [];
+    for (var gi = 0; gi < catOrder.length; gi++) {
+        var group = grouped[catOrder[gi]];
+        var gcol = 0;
+        for (var i = 0; i < group.items.length; i++) if (col[group.items[i].id]) gcol++;
+        html += '<div style="width:100%;padding:8px 0 4px 0;">';
+        html += '<div style="font-size:12px;font-weight:bold;color:#e94560;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:8px;">';
+        html += group.label;
+        html += ' <span style="color:#555;font-size:10px;font-weight:normal;">(' + gcol + '/' + group.items.length + ')</span></div>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;">';
+        for (var i = 0; i < group.items.length; i++) {
+            var it = group.items[i];
+            var isC = !!col[it.id];
+            var cls2 = isC ? 'collected' : 'not-collected';
+            html += '<div class="item-card ' + cls2 + '" data-id="' + it.id + '" data-col="' + isC + '" data-gidx="' + allItems.length + '" title="Clique para copiar o comando de withdraw">';
+            if (isC) html += '<div class="badge green">&#10003;</div>';
+            html += '<img src="https://maplestory.io/api/GMS/83/item/' + it.id + '/icon" onerror="this.style.opacity=0.2" loading="lazy">';
+            html += '<div class="item-name" id="n' + it.id + '">' + it.name + '</div>';
+            html += '<div class="item-id">' + it.id + '</div></div>';
+            allItems.push(it);
+        }
+        html += '</div></div>';
+    }
+
+    var grid = document.getElementById('eq-grid');
+    grid.innerHTML = html || '<div class="loading">Nenhum item encontrado.</div>';
+    var cards = grid.querySelectorAll('.item-card');
+    for (var i = 0; i < cards.length; i++) {
+        (function(card) {
+            var idx = parseInt(card.getAttribute('data-gidx'));
+            card.addEventListener('mouseenter', function(e) { showEqTip(e, allItems[idx]); });
+            card.addEventListener('mouseleave', hideTip);
+            card.addEventListener('click', function() { copyEqCmd(allItems[idx]); });
+        })(cards[i]);
+    }
+}
+
+function copyEqCmd(item) {
+    var card = document.querySelector('.item-card[data-id="' + item.id + '"]');
+
+    // Só funciona quando uma conta específica está selecionada
+    if (curEqAcc === null) return;
+
+    // Verifica se a conta tem o item na collection
+    var col = getEqCol();
+    var hasItem = !!col[item.id];
+
+    if (!hasItem) {
+        // Flash vermelho: item não está na collection desta conta
+        if (card) {
+            card.style.transition = 'border-color 0.1s';
+            card.style.borderColor = '#e94560';
+            card.style.background = '#2e1a1a';
+            setTimeout(function() {
+                card.style.borderColor = '';
+                card.style.background = '';
+                card.style.transition = 'border-color 0.2s, transform 0.1s';
+            }, 700);
+        }
+        return;
+    }
+
+    // Tem o item — copia o comando
+    var cmd = '!cc withdraw ' + item.id;
+    var ta = document.createElement('textarea');
+    ta.value = cmd;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+
+    // Flash verde de confirmação
+    if (card) {
+        card.style.transition = 'border-color 0.1s';
+        card.style.borderColor = '#27ae60';
+        card.style.background = '#1a3a1a';
+        setTimeout(function() {
+            card.style.borderColor = '';
+            card.style.background = '';
+            card.style.transition = 'border-color 0.2s, transform 0.1s';
+        }, 800);
+    }
+}
+
+function loadEqName(item) {
+    // Nomes agora vêm do item_names no banco de dados
+}
+
+// === CARTAS ===
+function loadCards() {
+    fetch('/api/cards').then(function(r) { return r.json(); }).then(function(d) {
+        CARDS = d;
+        var html = '<button class="account-btn active" id="card-acc-null">Todas</button>';
+        for (var i = 0; i < d.accounts.length; i++) {
+            var a = d.accounts[i];
+            html += '<button class="account-btn" id="card-acc-' + a.id + '">' + a.name + ' (' + a.total + ' | Lv5: ' + a.maxed + ')</button>';
+        }
+        document.getElementById('card-accs').innerHTML = html;
+        document.getElementById('card-acc-null').addEventListener('click', function() { selCardAcc(null); });
+        for (var i = 0; i < d.accounts.length; i++) {
+            (function(acc) {
+                document.getElementById('card-acc-' + acc.id).addEventListener('click', function() { selCardAcc(acc.id); });
+            })(d.accounts[i]);
+        }
+        renderCards();
+    });
+}
+
+document.getElementById('cbtn-all').addEventListener('click', function() { setCardFilter('all'); });
+document.getElementById('cbtn-maxed').addEventListener('click', function() { setCardFilter('maxed'); });
+document.getElementById('cbtn-partial').addEventListener('click', function() { setCardFilter('partial'); });
+document.getElementById('cbtn-missing').addEventListener('click', function() { setCardFilter('missing'); });
+document.getElementById('card-search').addEventListener('input', function() { renderCards(); });
+
+function selCardAcc(id) {
+    curCardAcc = id;
+    var bs = document.querySelectorAll('#card-accs .account-btn');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.remove('active');
+    document.getElementById('card-acc-' + id).classList.add('active');
+    renderCards();
+}
+
+function setCardFilter(f) {
+    curCardFilter = f;
+    var ids = ['cbtn-all','cbtn-maxed','cbtn-partial','cbtn-missing'];
+    for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).classList.remove('active');
+    document.getElementById('cbtn-' + f).classList.add('active');
+    renderCards();
+}
+
+function getCardData() {
+    if (curCardAcc === null) return null;
+    for (var i = 0; i < CARDS.accounts.length; i++) {
+        if (CARDS.accounts[i].id == curCardAcc) return CARDS.accounts[i].cards;
+    }
+    return {};
+}
+
+function renderCards() {
+    if (!CARDS) return;
+    var srch = document.getElementById('card-search').value.toLowerCase();
+    var cardData = getCardData();
+    var list = [];
+    for (var i = 0; i < CARDS.cards.length; i++) {
+        var c = CARDS.cards[i];
+        var lvl = cardData ? (cardData[c.cardid] || 0) : 0;
+        if (curCardFilter == 'maxed' && lvl < 5) continue;
+        if (curCardFilter == 'partial' && (lvl == 0 || lvl >= 5)) continue;
+        if (curCardFilter == 'missing' && lvl > 0) continue;
+        if (srch && ('' + c.cardid).indexOf(srch) < 0 && ('' + c.mobid).indexOf(srch) < 0) continue;
+        list.push({card: c, level: lvl});
+    }
+    var tot = CARDS.cards.length, col = 0, maxed = 0;
+    if (cardData) {
+        for (var k in cardData) { col++; if (cardData[k] >= 5) maxed++; }
+    }
+    var pct = tot > 0 ? Math.round(col / tot * 100) : 0;
+    document.getElementById('card-total').textContent = tot;
+    document.getElementById('card-col').textContent = col;
+    document.getElementById('card-maxed').textContent = maxed;
+    document.getElementById('card-prog').style.width = pct + '%';
+    document.getElementById('card-pct').textContent = pct + '%';
+    // Bonus da conta selecionada
+    if (curCardAcc !== null) {
+        for (var i = 0; i < CARDS.accounts.length; i++) {
+            if (CARDS.accounts[i].id == curCardAcc) {
+                var acc = CARDS.accounts[i];
+                document.getElementById('card-stats-bon').textContent = '+' + (acc.cardBookBonusStats || 0) + ' STR/DEX/INT/LUK';
+                var expPct = Math.round((acc.cardBookBonusRate || 0) * 100);
+                document.getElementById('card-exp-bon').textContent = '+' + expPct + '% EXP';
+                break;
+            }
+        }
+    } else {
+        document.getElementById('card-stats-bon').textContent = '-';
+        document.getElementById('card-exp-bon').textContent = '-';
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+        var entry = list[i], c = entry.card, lvl = entry.level;
+        var cls = lvl >= 5 ? 'maxed' : (lvl > 0 ? 'collected' : 'not-collected');
+        var dots = '';
+        for (var d = 1; d <= 5; d++) dots += '<div class="level-dot' + (d <= lvl ? ' filled' : '') + '"></div>';
+        html += '<div class="item-card ' + cls + '" data-mob="' + c.mobid + '" data-card="' + c.cardid + '" data-lvl="' + lvl + '">';
+        if (lvl >= 5) html += '<div class="badge gold">5</div>';
+        else if (lvl > 0) html += '<div class="badge green">' + lvl + '</div>';
+        html += '<img src="https://maplestory.io/api/GMS/83/mob/' + c.mobid + '/icon" onerror="this.style.opacity=0.2" loading="lazy">';
+        html += '<div class="item-name" id="mob' + c.mobid + '">Mob ' + c.mobid + '</div>';
+        html += '<div class="level-bar">' + dots + '</div></div>';
+    }
+    var grid = document.getElementById('card-grid');
+    grid.innerHTML = html || '<div class="loading">Nenhum resultado.</div>';
+    var cards = grid.querySelectorAll('.item-card');
+    for (var i = 0; i < cards.length; i++) {
+        (function(card) {
+            var mobId = card.getAttribute('data-mob');
+            var lvl = card.getAttribute('data-lvl');
+            card.addEventListener('mouseenter', function(e) {
+                var el = document.getElementById('mob' + mobId);
+                var name = el ? el.textContent : 'Mob ' + mobId;
+                showTip(e, name, 'Mob ID: ' + mobId, 'Nivel: ' + lvl + '/5');
+            });
+            card.addEventListener('mouseleave', hideTip);
+        })(cards[i]);
+    }
+    for (var i = 0; i < list.length; i++) loadMobName(list[i].card.mobid);
+}
+
+function loadMobName(mobId) {
+    var el = document.getElementById('mob' + mobId);
+    if (!el || el.textContent.indexOf('Mob ') < 0) return;
+    fetch('https://maplestory.io/api/GMS/83/mob/' + mobId).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.name) { var el2 = document.getElementById('mob' + mobId); if (el2) el2.textContent = d.name; }
+    }).catch(function() {});
+}
+
+// === MONSTROS ===
+function loadMobs() {
+    fetch('/api/mobs').then(function(r) { return r.json(); }).then(function(d) {
+        MOBS = d;
+        document.getElementById('mob-total').textContent = d.mobs.length;
+        renderMobs();
+    });
+}
+
+document.getElementById('mob-search').addEventListener('input', function() { renderMobs(); });
+
+function renderMobs() {
+    if (!MOBS) return;
+    var srch = document.getElementById('mob-search').value.toLowerCase();
+    var list = [];
+    for (var i = 0; i < MOBS.mobs.length; i++) {
+        var m = MOBS.mobs[i];
+        if (srch && m.name.toLowerCase().indexOf(srch) < 0 && ('' + m.id).indexOf(srch) < 0) continue;
+        list.push(m);
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+        var m = list[i];
+        var dropInfo = m.drops.length > 0 ? m.drops.length + ' drops' : 'sem drops';
+        var killInfo = '';
+        var totalKills = 0;
+        for (var k in m.kills) totalKills += m.kills[k];
+        if (totalKills > 0) {
+            killInfo = '<div style="font-size:9px;color:#e94560;margin-top:2px;">&#9876; ' + totalKills.toLocaleString() + ' kills</div>';
+        }
+        html += '<div class="mob-card" data-id="' + m.id + '">';
+        html += '<img src="https://maplestory.io/api/GMS/83/mob/' + m.id + '/icon" onerror="this.style.opacity=0.2" loading="lazy">';
+        html += '<div class="item-name" id="mobname' + m.id + '">' + m.name + '</div>';
+        html += '<div class="mob-drops">' + dropInfo + '</div>';
+        html += killInfo;
+        html += '</div>';
+    }
+    var grid = document.getElementById('mob-grid');
+    grid.innerHTML = html || '<div class="loading">Nenhum monstro encontrado.</div>';
+    var cards = grid.querySelectorAll('.mob-card');
+    for (var i = 0; i < cards.length; i++) {
+        (function(card, mob) {
+            card.addEventListener('mouseenter', function(e) {
+                showTip(e, mob.name, 'ID: ' + mob.id, mob.drops.length + ' drops de equip');
+            });
+            card.addEventListener('mouseleave', hideTip);
+            card.addEventListener('click', function() { showMobDrops(mob); });
+        })(cards[i], list[i]);
+    }
+    for (var i = 0; i < list.length; i++) loadMobNameFull(list[i]);
+}
+
+function loadMobNameFull(mob) {
+    if (mob.name && mob.name.indexOf('Mob ') < 0) return;
+    fetch('https://maplestory.io/api/GMS/83/mob/' + mob.id).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.name) {
+            mob.name = d.name;
+            var el = document.getElementById('mobname' + mob.id);
+            if (el) el.textContent = d.name;
+        }
+    }).catch(function() {});
+}
+
+function showMobDrops(mob) {
+    if (mob.drops.length == 0) {
+        showDropModal(mob.name, mob.id, [], mob.kills || {});
+        return;
+    }
+    showDropModal(mob.name, mob.id, mob.drops, mob.kills || {});
+}
+
+function showDropModal(mobName, mobId, drops, kills) {
+    var existing = document.getElementById('drop-modal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'drop-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:2000;display:flex;align-items:center;justify-content:center;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:#16213e;border:2px solid #e94560;border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;';
+
+    var killsHtml = '';
+    if (kills && Object.keys(kills).length > 0) {
+        killsHtml = '<div style="margin-bottom:14px;padding:10px;background:#0f3460;border-radius:8px;">';
+        killsHtml += '<div style="font-size:12px;color:#aaa;margin-bottom:6px;">Kills por conta:</div>';
+        for (var acc in kills) {
+            killsHtml += '<div style="font-size:13px;color:#e94560;">&#9876; ' + acc + ': <b>' + kills[acc].toLocaleString() + '</b></div>';
+        }
+        killsHtml += '</div>';
+    }
+    var title = '<h2 style="color:#e94560;margin-bottom:16px;">' + mobName + ' <span style="color:#aaa;font-size:14px">(ID: ' + mobId + ')</span></h2>' + killsHtml;
+
+    var dropsHtml = '';
+    if (drops.length == 0) {
+        dropsHtml = '<p style="color:#aaa;">Sem drops de equipamentos registrados.</p>';
+    } else {
+        dropsHtml = '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+        for (var i = 0; i < drops.length; i++) {
+            var dr = drops[i];
+            var pct = dr.chance > 0 ? (dr.chance / 100).toFixed(1) + '%' : '?';
+            dropsHtml += '<div style="background:#0f3460;border-radius:8px;padding:8px;text-align:center;width:80px;" title="Item ' + dr.itemid + '">';
+            dropsHtml += '<img src="https://maplestory.io/api/GMS/83/item/' + dr.itemid + '/icon" onerror="this.style.opacity=0.2" style="width:40px;height:40px;object-fit:contain;image-rendering:pixelated;">';
+            dropsHtml += '<div style="font-size:8px;color:#aaa;margin-top:2px;" id="dropname-' + dr.itemid + '">' + dr.itemid + '</div>';
+            dropsHtml += '<div style="font-size:9px;color:#f39c12;">' + pct + '</div>';
+            dropsHtml += '</div>';
+        }
+        dropsHtml += '</div>';
+    }
+
+    var closeBtn = '<button id="close-drop-modal" style="margin-top:16px;background:#e94560;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;">Fechar</button>';
+
+    inner.innerHTML = title + dropsHtml + closeBtn;
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+    document.getElementById("close-drop-modal").addEventListener("click", function() { modal.remove(); });
+}
+
+// Inicia
+
+// === QUESTS ===
+var curQuestAcc = null, curQuestFilter = 'all';
+
+document.getElementById('qbtn-all').addEventListener('click', function() { setQuestFilter('all'); });
+document.getElementById('qbtn-completed').addEventListener('click', function() { setQuestFilter('completed'); });
+document.getElementById('qbtn-progress').addEventListener('click', function() { setQuestFilter('progress'); });
+document.getElementById('qbtn-missing').addEventListener('click', function() { setQuestFilter('missing'); });
+document.getElementById('quest-search').addEventListener('input', function() { renderQuests(); });
+
+function loadQuests() {
+    fetch('/api/quests').then(function(r){return r.json();}).then(function(d){
+        QUESTS = d;
+        // Carrega todas as quests do servidor via maplestory.io
+        fetch('https://maplestory.io/api/GMS/83/quest').then(function(r){return r.json();}).then(function(qs){
+            ALL_QUESTS = qs;
+        }).catch(function(){ ALL_QUESTS = []; });
+
+        var html = '<button class="account-btn active" id="quest-acc-null">Todas</button>';
+        for (var i = 0; i < d.accounts.length; i++) {
+            var a = d.accounts[i];
+            html += '<button class="account-btn" id="quest-acc-' + a.id + '">' + a.name + ' (' + a.total_completed + '&#10003;)</button>';
+        }
+        document.getElementById('quest-accs').innerHTML = html;
+        document.getElementById('quest-acc-null').addEventListener('click', function(){ selQuestAcc(null); });
+        for (var i = 0; i < d.accounts.length; i++) {
+            (function(acc){
+                var el = document.getElementById('quest-acc-' + acc.id);
+                if (el) el.addEventListener('click', function(){ selQuestAcc(acc.id); });
+            })(d.accounts[i]);
+        }
+        if (d.accounts.length > 0) {
+            curQuestAcc = d.accounts[0].id;
+            document.getElementById('quest-acc-null').classList.remove('active');
+            var btn = document.getElementById('quest-acc-' + curQuestAcc);
+            if (btn) btn.classList.add('active');
+        }
+        renderQuests();
+    });
+}
+
+function selQuestAcc(id) {
+    curQuestAcc = id;
+    var bs = document.querySelectorAll('#quest-accs .account-btn');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.remove('active');
+    document.getElementById('quest-acc-' + id).classList.add('active');
+    renderQuests();
+}
+
+function setQuestFilter(f) {
+    curQuestFilter = f;
+    var ids = ['qbtn-all','qbtn-completed','qbtn-progress','qbtn-missing'];
+    for (var i = 0; i < ids.length; i++) document.getElementById(ids[i]).classList.remove('active');
+    document.getElementById('qbtn-' + f).classList.add('active');
+    renderQuests();
+}
+
+function getAccQuests() {
+    if (curQuestAcc === null) {
+        var mc = {}, mp = {};
+        for (var i = 0; i < QUESTS.accounts.length; i++) {
+            var a = QUESTS.accounts[i];
+            for (var j = 0; j < a.completed.length; j++) mc[a.completed[j].id] = a.completed[j];
+            for (var j = 0; j < a.in_progress.length; j++) mp[a.in_progress[j].id] = a.in_progress[j];
+        }
+        return { completed: Object.values(mc), in_progress: Object.values(mp) };
+    }
+    for (var i = 0; i < QUESTS.accounts.length; i++) {
+        if (QUESTS.accounts[i].id == curQuestAcc) return QUESTS.accounts[i];
+    }
+    return { completed: [], in_progress: [] };
+}
+
+function renderQuests() {
+    if (!QUESTS) return;
+    var srch = document.getElementById('quest-search').value.toLowerCase();
+    var acc = getAccQuests();
+    var completedIds = {};
+    var progressIds = {};
+    for (var i = 0; i < acc.completed.length; i++) completedIds[acc.completed[i].id] = true;
+    for (var i = 0; i < acc.in_progress.length; i++) progressIds[acc.in_progress[i].id] = true;
+
+    var allServerQuests = ALL_QUESTS || [];
+    var totalServer = allServerQuests.length;
+    document.getElementById('q-total').textContent = totalServer > 0 ? totalServer : '?';
+    document.getElementById('q-completed').textContent = acc.completed.length;
+    document.getElementById('q-progress').textContent = acc.in_progress.length;
+    var missing = totalServer > 0 ? totalServer - acc.completed.length - acc.in_progress.length : '?';
+    document.getElementById('q-missing').textContent = missing;
+    var pct = totalServer > 0 ? Math.round(acc.completed.length / totalServer * 100) : 0;
+    document.getElementById('q-prog').style.width = pct + '%';
+    document.getElementById('q-pct').textContent = pct + '%';
+    // Bonus de quests da conta selecionada
+    var questAcc = null;
+    if (curQuestAcc !== null && QUESTS) {
+        for (var qi = 0; qi < QUESTS.accounts.length; qi++) {
+            if (QUESTS.accounts[qi].id == curQuestAcc) { questAcc = QUESTS.accounts[qi]; break; }
+        }
+    }
+    if (questAcc) {
+        document.getElementById('q-stats-bon').textContent = '+' + (questAcc.questBonusStats || 0) + ' STR/DEX/INT/LUK';
+        document.getElementById('q-exp-bon').textContent = '+' + Math.round((questAcc.questBonusRate || 0) * 100) + '% EXP';
+    } else {
+        document.getElementById('q-stats-bon').textContent = '-';
+        document.getElementById('q-exp-bon').textContent = '-';
+    }
+
+    var list = [];
+
+    if (curQuestFilter == 'missing' && allServerQuests.length > 0) {
+        for (var i = 0; i < allServerQuests.length; i++) {
+            var q = allServerQuests[i];
+            var qid = q.id || q.questId;
+            if (completedIds[qid] || progressIds[qid]) continue;
+            var name = (q.name || q.questName || 'Quest ' + qid).toLowerCase();
+            if (srch && name.indexOf(srch) < 0 && (''+qid).indexOf(srch) < 0) continue;
+            list.push({id: qid, name: q.name || q.questName || 'Quest ' + qid, status: 'missing'});
+        }
+    } else {
+        if (curQuestFilter != 'progress' && curQuestFilter != 'missing') {
+            for (var i = 0; i < acc.completed.length; i++) {
+                var q = acc.completed[i];
+                if (srch && q.name.toLowerCase().indexOf(srch) < 0 && (''+q.id).indexOf(srch) < 0) continue;
+                list.push({id: q.id, name: q.name, status: 'completed'});
+            }
+        }
+        if (curQuestFilter != 'completed' && curQuestFilter != 'missing') {
+            for (var i = 0; i < acc.in_progress.length; i++) {
+                var q = acc.in_progress[i];
+                if (srch && q.name.toLowerCase().indexOf(srch) < 0 && (''+q.id).indexOf(srch) < 0) continue;
+                if (!completedIds[q.id]) list.push({id: q.id, name: q.name, status: 'progress'});
+            }
+        }
+    }
+
+    list.sort(function(a,b){ return a.id - b.id; });
+
+    // Agrupa por area
+    var areaMap = {
+        'Victoria Island': [1000, 2999],
+        'Orbis / El Nath': [3000, 3999],
+        'Ludus Lake': [4000, 4999],
+        'Aqua Road': [5000, 5499],
+        'Mu Lung / Nihal': [5500, 5999],
+        'Leafre': [6000, 6499],
+        'Masteria': [6500, 6999],
+        'World Tour': [7000, 7999],
+        'Party Quest': [8000, 8999],
+        'Job Quest': [9000, 29999],
+        'Event / Outros': [30000, 99999]
+    };
+
+    function getArea(id) {
+        for (var area in areaMap) {
+            if (id >= areaMap[area][0] && id <= areaMap[area][1]) return area;
+        }
+        return 'Outros';
+    }
+
+    var grouped = {};
+    var areaOrder = Object.keys(areaMap);
+    areaOrder.push('Outros');
+    for (var i = 0; i < areaOrder.length; i++) grouped[areaOrder[i]] = [];
+    for (var i = 0; i < list.length; i++) {
+        var area = getArea(list[i].id);
+        if (!grouped[area]) grouped[area] = [];
+        grouped[area].push(list[i]);
+    }
+
+    var html = '';
+    for (var ai = 0; ai < areaOrder.length; ai++) {
+        var area = areaOrder[ai];
+        var qs = grouped[area];
+        if (!qs || qs.length == 0) continue;
+        html += '<div style="width:100%;padding:8px 0 4px 0;">';
+        html += '<div style="font-size:13px;font-weight:bold;color:#e94560;border-bottom:1px solid #333;padding-bottom:4px;margin-bottom:8px;">' + area + ' (' + qs.length + ')</div>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+        for (var i = 0; i < qs.length; i++) {
+            var q = qs[i];
+            var color = q.status == 'completed' ? '#27ae60' : (q.status == 'progress' ? '#f39c12' : '#444');
+            var icon = q.status == 'completed' ? '&#10003;' : (q.status == 'progress' ? '&#9654;' : '&#9675;');
+            html += '<div class="qcard" data-id="' + q.id + '" data-status="' + q.status + '" style="background:#16213e;border:1px solid ' + color + ';border-radius:6px;padding:6px 10px;min-width:140px;max-width:200px;cursor:pointer;">' ;
+            html += '<div style="color:' + color + ';font-weight:bold;font-size:11px;">' + icon + ' <span id="qn-' + q.id + '">' + q.name + '</span></div>';
+            html += '<div style="font-size:9px;color:#555;margin-top:1px;">ID: ' + q.id + '</div>';
+            html += '</div>';
+        }
+        html += '</div></div>';
+    }
+    document.getElementById('quest-grid').innerHTML = html || '<div class="loading">Nenhuma quest encontrada.</div>';
+    // Event listeners para cards de quest
+    var qcards = document.querySelectorAll('.qcard');
+    for (var ci = 0; ci < qcards.length; ci++) {
+        (function(card) {
+            card.addEventListener('click', function() {
+                showQuestModal(parseInt(card.getAttribute('data-id')), card.getAttribute('data-status'));
+            });
+        })(qcards[ci]);
+    }
+    loadQuestNames(list);
+}
+
+function loadQuestNames(list) {
+    for (var i = 0; i < list.length; i++) {
+        (function(q) {
+            if (!q.name || q.name.indexOf('Quest ') < 0) return;
+            fetch('https://maplestory.io/api/GMS/83/quest/' + q.id).then(function(r){return r.json();}).then(function(d){
+                var name = d.name || d.questName;
+                if (name) {
+                    q.name = name;
+                    var el = document.getElementById('qn-' + q.id);
+                    if (el) el.textContent = name;
+                }
+            }).catch(function(){});
+        })(list[i]);
+    }
+}
+
+
+function showQuestModal(questId, status) {
+    var existing = document.getElementById('quest-modal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'quest-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:2000;display:flex;align-items:center;justify-content:center;';
+
+    var inner = document.createElement('div');
+    inner.style.cssText = 'background:#16213e;border:2px solid #e94560;border-radius:12px;padding:24px;max-width:520px;width:92%;max-height:85vh;overflow-y:auto;';
+    inner.innerHTML = '<div style="color:#aaa;text-align:center;padding:20px;">Carregando quest ' + questId + '...</div>';
+    modal.appendChild(inner);
+    modal.addEventListener('click', function(e) { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
+
+    fetch('https://maplestory.io/api/GMS/83/quest/' + questId).then(function(r){return r.json();}).then(function(d){
+        var statusColor = status == 'completed' ? '#27ae60' : (status == 'progress' ? '#f39c12' : '#555');
+        var statusLabel = status == 'completed' ? '&#10003; Concluida' : (status == 'progress' ? '&#9654; Em andamento' : '&#9675; Nao iniciada');
+
+        var html = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">';
+        html += '<h2 style="color:#e94560;font-size:18px;flex:1;">' + (d.name || 'Quest ' + questId) + '</h2>';
+        html += '<span style="color:' + statusColor + ';font-size:12px;font-weight:bold;margin-left:10px;white-space:nowrap;">' + statusLabel + '</span>';
+        html += '</div>';
+
+        // Descricao
+        if (d.messages && d.messages.length > 0) {
+            html += '<div style="background:#0f3460;border-radius:8px;padding:12px;margin-bottom:14px;">';
+            html += '<div style="font-size:11px;color:#aaa;margin-bottom:4px;">Descricao:</div>';
+            html += '<div style="font-size:12px;color:#ccc;line-height:1.6;">' + (d.messages[1] || d.messages[0]) + '</div>';
+            html += '</div>';
+        }
+
+        // NPC de inicio
+        if (d.requirementToStart && d.requirementToStart.npcId) {
+            var npcId = d.requirementToStart.npcId;
+            html += '<div style="margin-bottom:14px;">';
+            html += '<div style="font-size:11px;color:#aaa;margin-bottom:6px;">NPC de inicio:</div>';
+            html += '<div style="display:flex;align-items:center;gap:10px;background:#0f3460;padding:10px;border-radius:8px;">';
+            html += '<img src="https://maplestory.io/api/GMS/83/npc/' + npcId + '/icon" style="width:40px;height:40px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">';
+            html += '<div><div style="font-size:12px;color:#eee;" id="qnpc-' + npcId + '">NPC ' + npcId + '</div>';
+            html += '<div style="font-size:10px;color:#555;">ID: ' + npcId + '</div></div>';
+            html += '</div></div>';
+            // Busca nome do NPC
+            fetch('https://maplestory.io/api/GMS/83/npc/' + npcId).then(function(r){return r.json();}).then(function(n){
+                var el = document.getElementById('qnpc-' + npcId);
+                if (el && n.name) el.textContent = n.name;
+            }).catch(function(){});
+        }
+
+        // Requisitos de inicio
+        if (d.requirementToStart) {
+            var req = d.requirementToStart;
+            var reqHtml = '';
+            if (req.jobs && req.jobs.length > 0 && !(req.jobs.length == 1 && req.jobs[0] == 0)) {
+                var jobNames = {0:'Beginner',100:'Warrior',110:'Fighter',111:'Crusader',112:'Hero',120:'Page',121:'White Knight',122:'Paladin',130:'Spearman',131:'Dragon Knight',132:'Dark Knight',200:'Magician',210:'F/P Wizard',211:'F/P Mage',212:'F/P Arch Mage',220:'I/L Wizard',221:'I/L Mage',222:'I/L Arch Mage',230:'Cleric',231:'Priest',232:'Bishop',300:'Archer',310:'Hunter',311:'Ranger',312:'Bowmaster',320:'Crossbowman',321:'Sniper',322:'Marksman',400:'Rogue',410:'Assassin',411:'Hermit',412:'Night Lord',420:'Bandit',421:'Chief Bandit',422:'Shadower',500:'Pirate',510:'Brawler',511:'Marauder',512:'Buccaneer',520:'Gunslinger',521:'Outlaw',522:'Corsair'};
+                var jobStr = req.jobs.map(function(j){ return jobNames[j] || 'Job '+j; }).join(', ');
+                reqHtml += '<div style="font-size:11px;color:#ccc;">Classes: <span style="color:#f39c12">' + jobStr + '</span></div>';
+            }
+            if (req.items && req.items.length > 0) {
+                reqHtml += '<div style="font-size:11px;color:#ccc;margin-top:4px;">Itens necessarios:</div>';
+                reqHtml += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">';
+                for (var i = 0; i < req.items.length; i++) {
+                    var it = req.items[i];
+                    reqHtml += '<div style="background:#16213e;border:1px solid #333;border-radius:6px;padding:4px;text-align:center;">';
+                    reqHtml += '<img src="https://maplestory.io/api/GMS/83/item/' + it.id + '/icon" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">';
+                    reqHtml += '<div style="font-size:9px;color:#aaa;">x' + it.count + '</div>';
+                    reqHtml += '</div>';
+                }
+                reqHtml += '</div>';
+            }
+            if (reqHtml) {
+                html += '<div style="background:#0f3460;border-radius:8px;padding:10px;margin-bottom:14px;">';
+                html += '<div style="font-size:11px;color:#aaa;margin-bottom:6px;">Requisitos:</div>';
+                html += reqHtml + '</div>';
+            }
+        }
+
+        // Recompensas
+        if (d.questsAvailableOnComplete && d.questsAvailableOnComplete.length > 0) {
+            var reward = d.questsAvailableOnComplete[0];
+            if (reward.items && reward.items.length > 0) {
+                html += '<div style="background:#0f3460;border-radius:8px;padding:10px;margin-bottom:14px;">';
+                html += '<div style="font-size:11px;color:#aaa;margin-bottom:6px;">Recompensas de itens:</div>';
+                html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+                for (var i = 0; i < reward.items.length; i++) {
+                    var it = reward.items[i];
+                    html += '<div style="background:#16213e;border:1px solid #27ae60;border-radius:6px;padding:4px;text-align:center;">';
+                    html += '<img src="https://maplestory.io/api/GMS/83/item/' + it.id + '/icon" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.3">';
+                    html += '<div style="font-size:9px;color:#27ae60;">x' + it.count + '</div>';
+                    html += '</div>';
+                }
+                html += '</div></div>';
+            }
+        }
+
+        html += '<div style="font-size:9px;color:#333;margin-top:8px;">Quest ID: ' + questId + '</div>';
+        html += '<button id="close-quest-modal" style="margin-top:14px;background:#e94560;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;">Fechar</button>';
+
+        inner.innerHTML = html;
+        document.getElementById('close-quest-modal').addEventListener('click', function(){ modal.remove(); });
+
+    }).catch(function(){
+        inner.innerHTML = '<div style="color:#e94560;text-align:center;padding:20px;">Erro ao carregar dados da quest.</div><button id="close-quest-err" style="margin-top:14px;background:#e94560;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;">Fechar</button>';
+        var errBtn = document.getElementById("close-quest-err");
+        if (errBtn) errBtn.addEventListener("click", function(){ modal.remove(); });
+    });
+}
+
+
+// === PERSONAGENS ===
+var JOB_NAMES = {0:'Beginner',100:'Warrior',110:'Fighter',111:'Crusader',112:'Hero',120:'Page',121:'White Knight',122:'Paladin',130:'Spearman',131:'Dragon Knight',132:'Dark Knight',200:'Magician',210:'F/P Wizard',211:'F/P Mage',212:'F/P Arch Mage',220:'I/L Wizard',221:'I/L Mage',222:'I/L Arch Mage',230:'Cleric',231:'Priest',232:'Bishop',300:'Archer',310:'Hunter',311:'Ranger',312:'Bowmaster',320:'Crossbowman',321:'Sniper',322:'Marksman',400:'Rogue',410:'Assassin',411:'Hermit',412:'Night Lord',420:'Bandit',421:'Chief Bandit',422:'Shadower',500:'Pirate',510:'Brawler',511:'Marauder',512:'Buccaneer',520:'Gunslinger',521:'Outlaw',522:'Corsair',900:'GM',910:'SuperGM'};
+var POS_NAMES = {'-1':'Chapeu','-2':'Face','-3':'Olho','-4':'Brinco','-5':'Top','-6':'Bottom','-7':'Sapato','-8':'Luva','-9':'Capa','-10':'Cinto','-11':'Arma','-12':'Escudo','-17':'Anel1','-18':'Anel2','-19':'Anel3','-20':'Anel4','-23':'Medalha','-49':'Montaria'};
+
+function loadCharsTab() {
+    if (!EQ) {
+        fetch('/api/collection').then(function(r){return r.json();}).then(function(d){
+            EQ = d;
+            renderCharAccounts();
+        });
+    } else {
+        renderCharAccounts();
+    }
+}
+
+function renderCharAccounts() {
+    var container = document.getElementById('char-accs');
+    var html = '';
+    for (var i = 0; i < EQ.accounts.length; i++) {
+        var a = EQ.accounts[i];
+        html += '<button class="account-btn" id="characc-' + a.id + '">' + a.name + '</button>';
+    }
+    container.innerHTML = html;
+    for (var i = 0; i < EQ.accounts.length; i++) {
+        (function(acc) {
+            document.getElementById('characc-' + acc.id).addEventListener('click', function() { loadChars(acc.id, acc.name); });
+        })(EQ.accounts[i]);
+    }
+    if (EQ.accounts.length > 0) {
+        loadChars(EQ.accounts[0].id, EQ.accounts[0].name);
+        document.getElementById('characc-' + EQ.accounts[0].id).classList.add('active');
+    }
+}
+
+function loadChars(accId, accName) {
+    var bs = document.querySelectorAll('#char-accs .account-btn');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.remove('active');
+    document.getElementById('characc-' + accId).classList.add('active');
+    document.getElementById('char-content').innerHTML = '<div class="loading">Carregando personagens...</div>';
+    fetch('/api/characters/' + accId).then(function(r){return r.json();}).then(function(d){
+        renderChars(d.characters);
+    });
+}
+
+function renderChars(chars) {
+    if (chars.length == 0) { document.getElementById('char-content').innerHTML = '<div class="loading">Nenhum personagem.</div>'; return; }
+    var html = '';
+    for (var ci = 0; ci < chars.length; ci++) {
+        var chr = chars[ci];
+        var jobName = JOB_NAMES[chr.job] || 'Job ' + chr.job;
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:12px;padding:20px;margin-bottom:24px;">';
+        // Header
+        html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;border-bottom:1px solid #333;padding-bottom:12px;">';
+        // Monta URL do sprite com equipamentos
+        var spriteItems = chr.equipped.filter(function(eq){ return eq.position >= -12 && eq.position <= -1; });
+        var spriteUrl = 'https://maplestory.io/api/GMS/83/character/' +
+                (chr.skincolor || 0) + ',' +   // ← skin vem primeiro!
+                chr.hair + ',' +
+                chr.face;
+
+for (var si2 = 0; si2 < spriteItems.length; si2++) {
+    spriteUrl += ',' + spriteItems[si2].itemid;
+}
+spriteUrl += '/stand1/0?showears=false&resize=2';
+        html += '<img src="' + spriteUrl + '" style="width:80px;height:100px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+        html += '<div><div style="font-size:18px;font-weight:bold;color:#e94560;">' + chr.name + '</div>';
+        html += '<div style="font-size:13px;color:#aaa;">Level ' + chr.level + ' ' + jobName + '</div>';
+        html += '<div style="font-size:12px;color:#f39c12;">' + chr.meso.toLocaleString() + ' mesos</div></div></div>';
+        // Stats
+        html += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">';
+        var stats = [['STR',chr.str,'#e74c3c'],['DEX',chr.dex,'#27ae60'],['INT',chr['int'],'#3498db'],['LUK',chr.luk,'#f39c12'],['HP',chr.hp+'/'+chr.maxhp,'#e74c3c'],['MP',chr.mp+'/'+chr.maxmp,'#3498db']];
+        for (var si = 0; si < stats.length; si++) {
+            html += '<div style="background:#0f3460;border-radius:6px;padding:6px 12px;text-align:center;">';
+            html += '<div style="font-size:10px;color:#aaa;">' + stats[si][0] + '</div>';
+            html += '<div style="font-size:14px;font-weight:bold;color:' + stats[si][2] + ';">' + stats[si][1] + '</div></div>';
+        }
+        html += '</div>';
+        // Equipamentos usando (filtra pets: position < -100)
+        var equipped_filtered = chr.equipped.filter(function(eq) { return eq.position >= -50; });
+        if (equipped_filtered.length > 0) {
+            html += '<div style="margin-bottom:16px;"><div style="font-size:12px;color:#aaa;margin-bottom:8px;font-weight:bold;">Equipamentos (' + equipped_filtered.length + '):</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:8px;">';
+            for (var ei = 0; ei < equipped_filtered.length; ei++) {
+                var eq = equipped_filtered[ei];
+                var pos = POS_NAMES[''+eq.position] || 'Slot '+eq.position;
+                html += '<div style="background:#0f3460;border:1px solid #333;border-radius:8px;padding:6px;text-align:center;width:70px;">';
+                html += '<img src="https://maplestory.io/api/GMS/83/item/' + eq.itemid + '/icon" style="width:36px;height:36px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+                html += '<div style="font-size:8px;color:#888;margin-top:2px;">' + pos + '</div>';
+                if (eq.itemlevel > 1) html += '<div style="font-size:8px;color:#f39c12;">Lv.' + eq.itemlevel + '</div>';
+                html += '</div>';
+            }
+            html += '</div></div>';
+        }
+
+        html += '</div>';
+    }
+    document.getElementById('char-content').innerHTML = html;
+}
+
+
+// === DAMAGE METER ===
+var JOB_MAP_DMG = {0:'Beginner',100:'Warrior',110:'Fighter',111:'Crusader',112:'Hero',120:'Page',121:'White Knight',122:'Paladin',130:'Spearman',131:'Dragon Knight',132:'Dark Knight',200:'Magician',210:'F/P Wizard',211:'F/P Mage',212:'F/P Arch Mage',220:'I/L Wizard',221:'I/L Mage',222:'I/L Arch Mage',230:'Cleric',231:'Priest',232:'Bishop',300:'Archer',310:'Hunter',311:'Ranger',312:'Bowmaster',320:'Crossbowman',321:'Sniper',322:'Marksman',400:'Rogue',410:'Assassin',411:'Hermit',412:'Night Lord',420:'Bandit',421:'Chief Bandit',422:'Shadower',500:'Pirate',510:'Brawler',511:'Marauder',512:'Buccaneer',520:'Gunslinger',521:'Outlaw',522:'Corsair'};
+
+document.getElementById('dmg-btn-live').addEventListener('click', function() {
+    dmgMode = 'live';
+    document.getElementById('dmg-btn-live').classList.add('active');
+    document.getElementById('dmg-btn-history').classList.remove('active');
+    connectDamageWs();
+});
+document.getElementById('dmg-btn-history').addEventListener('click', function() {
+    dmgMode = 'history';
+    document.getElementById('dmg-btn-history').classList.add('active');
+    document.getElementById('dmg-btn-live').classList.remove('active');
+    if (dmgWs) { dmgWs.close(); dmgWs = null; }
+    loadDamageHistory();
+});
+document.getElementById('dmg-btn-reset').addEventListener('click', function() {
+    if (confirm('Resetar todas as sessoes ativas?')) {
+        fetch('/api/damage/reset', {method:'POST'}).then(function(){ connectDamageWs(); });
+    }
+});
+
+function initDamageMeter() {
+    connectDamageWs();
+}
+
+function connectDamageWs() {
+    if (dmgWs) { dmgWs.close(); dmgWs = null; }
+    document.getElementById('damage-content').innerHTML = '<div class="loading">Conectando ao WebSocket...</div>';
+    var wsUrl = 'ws://' + window.location.host + '/ws/damage';
+    try {
+        dmgWs = new WebSocket(wsUrl);
+        dmgWs.onopen = function() {
+            document.getElementById('damage-content').innerHTML = '<div class="loading">Aguardando dados...</div>';
+        };
+        dmgWs.onmessage = function(e) {
+            var data = JSON.parse(e.data);
+            if (data.type === 'update') renderLiveDamage(data.sessions);
+        };
+        dmgWs.onerror = function() {
+            document.getElementById('damage-content').innerHTML = '<div class="loading" style="color:#e94560">Erro na conexao WebSocket. Verifique se o servidor esta rodando.</div>';
+        };
+        dmgWs.onclose = function() {
+            if (dmgMode === 'live' && document.getElementById('sec-damage').classList.contains('active')) {
+                setTimeout(function() {
+                    if (dmgMode === 'live') connectDamageWs();
+                }, 3000);
+            }
+        };
+    } catch(e) {
+        document.getElementById('damage-content').innerHTML = '<div class="loading" style="color:#e94560">WebSocket nao suportado.</div>';
+    }
+}
+
+function fmtNum(n) {
+    if (n >= 1000000000) return (n/1000000000).toFixed(2) + 'B';
+    if (n >= 1000000) return (n/1000000).toFixed(2) + 'M';
+    if (n >= 1000) return (n/1000).toFixed(1) + 'K';
+    return n.toString();
+}
+
+function fmtTime(s) {
+    var m = Math.floor(s/60), sec = s % 60;
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+var mapNameCache = {};
+
+function getMapName(mapid, elemId) {
+    if (mapNameCache[mapid]) {
+        var el = document.getElementById(elemId);
+        if (el) el.textContent = mapNameCache[mapid];
+        return;
+    }
+    fetch('https://maplestory.io/api/GMS/83/map/' + mapid).then(function(r){return r.json();}).then(function(d){
+        var name = (d.streetName ? d.streetName + ' - ' : '') + (d.name || ('Map ' + mapid));
+        mapNameCache[mapid] = name;
+        var el = document.getElementById(elemId);
+        if (el) el.textContent = name;
+    }).catch(function(){ mapNameCache[mapid] = 'Map ' + mapid; });
+}
+
+function renderLiveDamage(sessions) {
+    if (!sessions || sessions.length == 0) {
+        document.getElementById('damage-content').innerHTML = '<div class="loading">Nenhuma sessao ativa. Entre no jogo para comecar.</div>';
+        return;
+    }
+    var totalDmg = sessions.reduce(function(a,b){ return a + (b.total_damage||0); }, 0);
+    var html = '<div style="display:flex;flex-wrap:wrap;gap:16px;">';
+    for (var i = 0; i < sessions.length; i++) {
+        var s = sessions[i];
+        var pct = totalDmg > 0 ? Math.round((s.total_damage||0) / totalDmg * 100) : 0;
+        var jobName = JOB_MAP_DMG[s.job] || 'Job '+s.job;
+        var barColor = ['#e74c3c','#f39c12','#27ae60','#3498db','#9b59b6'][i % 5];
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:10px;padding:16px;min-width:300px;max-width:400px;cursor:pointer;" onclick="loadSessionDetail(' + s.id + ')">';
+
+        // Header
+        html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">';
+        html += '<div><div style="font-size:16px;font-weight:bold;color:#e94560;">' + s.char_name + '</div>';
+        html += '<div style="font-size:11px;color:#aaa;">Lv.' + s.level + ' ' + jobName + ' | ' + s.account_name + '</div>';
+        html += '<div style="font-size:10px;color:#555;" id="mapname-' + s.id + '">Map ' + s.mapid + '</div></div>';
+        html += '<div style="text-align:right;"><div style="font-size:20px;font-weight:bold;color:#f39c12;">' + pct + '%</div>';
+        html += '<div style="font-size:10px;color:#555;">' + fmtTime(s.duration_s) + '</div></div></div>';
+
+        // Barra de progresso
+        html += '<div style="background:#0f3460;border-radius:4px;height:6px;margin-bottom:10px;">';
+        html += '<div style="background:' + barColor + ';width:' + pct + '%;height:6px;border-radius:4px;transition:width 0.5s;"></div></div>';
+
+        // Stats
+        html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">';
+        var statsData = [
+            ['Dano', fmtNum(s.total_damage||0), '#eee'],
+            ['DPS', fmtNum(s.dps||0), '#f39c12'],
+            ['Crit%', (s.crit_pct||0)+'%', '#e74c3c'],
+            ['Cura', fmtNum(s.total_heal||0), '#27ae60'],
+            ['EXP', '+'+fmtNum(s.exp_gained||0), '#3498db'],
+            ['Meso', '+'+fmtNum(s.meso_gained||0), '#f39c12']
+        ];
+        for (var si = 0; si < statsData.length; si++) {
+            html += '<div style="background:#0f3460;border-radius:6px;padding:3px 8px;text-align:center;">';
+            html += '<div style="font-size:9px;color:#aaa;">' + statsData[si][0] + '</div>';
+            html += '<div style="font-size:12px;color:' + statsData[si][2] + ';font-weight:bold;">' + statsData[si][1] + '</div></div>';
+        }
+        html += '</div>';
+
+        // Top mobs
+        if (s.mobs && s.mobs.length > 0) {
+            html += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:4px;">';
+            html += '<div style="font-size:9px;color:#555;margin-bottom:4px;">Top Mobs:</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:4px;">';
+            for (var mi = 0; mi < s.mobs.length; mi++) {
+                var mob = s.mobs[mi];
+                html += '<div style="display:flex;align-items:center;gap:4px;background:#0f3460;border-radius:4px;padding:2px 6px;">';
+                html += '<img src="https://maplestory.io/api/GMS/83/mob/' + mob.mobid + '/icon" style="width:20px;height:20px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+                html += '<div style="font-size:9px;color:#aaa;">' + fmtNum(mob.dmg) + '</div></div>';
+            }
+            html += '</div></div>';
+        }
+
+        html += '</div>';
+    }
+    html += '</div>';
+    document.getElementById('damage-content').innerHTML = html;
+
+    // Carrega nomes dos mapas
+    for (var i = 0; i < sessions.length; i++) {
+        getMapName(sessions[i].mapid, 'mapname-' + sessions[i].id);
+    }
+}
+
+function loadSessionDetail(sessionId) {
+    dmgSelectedSession = sessionId;
+    document.getElementById('damage-content').innerHTML = '<div class="loading">Carregando detalhes...</div>';
+    fetch('/api/damage/session/' + sessionId).then(function(r){return r.json();}).then(function(d){
+        renderSessionDetail(d);
+    });
+}
+
+function renderSessionDetail(d) {
+    var s = d.session;
+    var jobName = JOB_MAP_DMG[s.job] || 'Job '+s.job;
+    var html = '<button onclick="initDamageMeter()" style="background:#0f3460;color:#aaa;border:1px solid #333;padding:6px 14px;border-radius:6px;cursor:pointer;margin-bottom:16px;">&#8592; Voltar</button>';
+    html += '<div style="background:#16213e;border:1px solid #333;border-radius:10px;padding:20px;margin-bottom:16px;">';
+    html += '<div style="font-size:18px;font-weight:bold;color:#e94560;margin-bottom:4px;">' + s.char_name + ' <span style="font-size:13px;color:#aaa;">Lv.' + s.level + ' ' + jobName + '</span></div>';
+    html += '<div style="font-size:11px;color:#555;margin-bottom:12px;">' + s.account_name + ' | Duracao: ' + fmtTime(s.duration_s) + (s.active ? ' <span style="color:#27ae60;">&#9679; ATIVO</span>' : '') + '</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:10px;">';
+    var stats = [
+        ['Dano Total', fmtNum(s.total_damage), '#f39c12'],
+        ['DPS', fmtNum(s.dps), '#e74c3c'],
+        ['Crit%', s.crit_pct + '%', '#e74c3c'],
+        ['Hits', s.hits.toLocaleString(), '#3498db'],
+        ['Cura', fmtNum(s.total_heal), '#27ae60'],
+        ['Dano Recebido', fmtNum(s.total_received), '#9b59b6'],
+        ['EXP Ganho', '+' + fmtNum(s.exp_gained || 0), '#3498db'],
+        ['Meso Ganho', '+' + fmtNum(s.meso_gained || 0), '#f39c12']
+    ];
+    for (var i = 0; i < stats.length; i++) {
+        html += '<div style="background:#0f3460;border-radius:8px;padding:8px 14px;text-align:center;">';
+        html += '<div style="font-size:10px;color:#aaa;">' + stats[i][0] + '</div>';
+        html += '<div style="font-size:16px;font-weight:bold;color:' + stats[i][2] + ';">' + stats[i][1] + '</div></div>';
+    }
+    html += '</div></div>';
+
+    // Skills
+    if (d.skills && d.skills.length > 0) {
+        var totalSkillDmg = d.skills.reduce(function(a,b){ return a+(b.total||0); }, 0);
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:10px;padding:16px;margin-bottom:16px;">';
+        html += '<div style="font-size:13px;font-weight:bold;color:#aaa;margin-bottom:10px;">Dano por Skill</div>';
+        for (var i = 0; i < d.skills.length; i++) {
+            var sk = d.skills[i];
+            var pct = totalSkillDmg > 0 ? Math.round(sk.total / totalSkillDmg * 100) : 0;
+            var skillName = sk.skillid == 0 ? 'Ataque Normal' : 'Skill ' + sk.skillid;
+            html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+            html += '<img src="https://maplestory.io/api/GMS/83/skill/' + sk.skillid + '/icon" style="width:28px;height:28px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+            html += '<div style="flex:1;">';
+            html += '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">';
+            html += '<span style="color:#eee;" id="sk-' + sk.skillid + '">' + skillName + '</span>';
+            html += '<span style="color:#f39c12;">' + fmtNum(sk.total) + ' (' + pct + '%)</span></div>';
+            html += '<div style="background:#0f3460;border-radius:3px;height:4px;">';
+            html += '<div style="background:#e94560;width:' + pct + '%;height:4px;border-radius:3px;"></div></div>';
+            html += '<div style="font-size:9px;color:#555;margin-top:1px;">' + sk.hits + ' hits | max: ' + fmtNum(sk.max_hit) + ' | crits: ' + sk.crits + '</div>';
+            html += '</div></div>';
+            // Carrega nome da skill
+            if (sk.skillid > 0) {
+                (function(skid) {
+                    fetch('https://maplestory.io/api/GMS/83/skill/' + skid).then(function(r){return r.json();}).then(function(sd){
+                        var el = document.getElementById('sk-' + skid);
+                        if (el && sd.name) el.textContent = sd.name;
+                    }).catch(function(){});
+                })(sk.skillid);
+            }
+        }
+        html += '</div>';
+    }
+
+    // Mobs
+    if (d.mobs && d.mobs.length > 0) {
+        var totalMobDmg = d.mobs.reduce(function(a,b){ return a+(b.total_dmg||0); }, 0);
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:10px;padding:16px;margin-bottom:16px;">';
+        html += '<div style="font-size:13px;font-weight:bold;color:#aaa;margin-bottom:10px;">Dano por Mob</div>';
+        for (var i = 0; i < d.mobs.length; i++) {
+            var mob = d.mobs[i];
+            var pct = totalMobDmg > 0 ? Math.round(mob.total_dmg / totalMobDmg * 100) : 0;
+            html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">';
+            html += '<img src="https://maplestory.io/api/GMS/83/mob/' + mob.mobid + '/icon" style="width:32px;height:32px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+            html += '<div style="flex:1;">';
+            html += '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;">';
+            html += '<span style="color:#eee;" id="mobn-' + mob.mobid + '">Mob ' + mob.mobid + '</span>';
+            html += '<span style="color:#f39c12;">' + fmtNum(mob.total_dmg) + ' (' + pct + '%)</span></div>';
+            html += '<div style="background:#0f3460;border-radius:3px;height:4px;">';
+            html += '<div style="background:#3498db;width:' + pct + '%;height:4px;border-radius:3px;"></div></div>';
+            html += '<div style="font-size:9px;color:#555;margin-top:1px;">' + mob.kills + ' kills | max: ' + fmtNum(mob.max_hit) + '</div>';
+            html += '</div></div>';
+            (function(mid) {
+                fetch('https://maplestory.io/api/GMS/83/mob/' + mid).then(function(r){return r.json();}).then(function(md){
+                    var el = document.getElementById('mobn-' + mid);
+                    if (el && md.name) el.textContent = md.name;
+                }).catch(function(){});
+            })(mob.mobid);
+        }
+        html += '</div>';
+    }
+
+    // Timeline
+    if (d.timeline && d.timeline.length > 0) {
+        var maxDmg = Math.max.apply(null, d.timeline.map(function(t){return t.dmg;}));
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:10px;padding:16px;">';
+        html += '<div style="font-size:13px;font-weight:bold;color:#aaa;margin-bottom:10px;">Timeline de Dano</div>';
+        html += '<div style="display:flex;align-items:flex-end;gap:2px;height:80px;">';
+        for (var i = 0; i < d.timeline.length; i++) {
+            var t = d.timeline[i];
+            var h = maxDmg > 0 ? Math.max(4, Math.round(t.dmg / maxDmg * 76)) : 4;
+            html += '<div title="t+' + t.t + 's: ' + fmtNum(t.dmg) + '" style="flex:1;background:#e94560;height:' + h + 'px;border-radius:2px 2px 0 0;min-width:3px;"></div>';
+        }
+        html += '</div></div>';
+    }
+
+    document.getElementById('damage-content').innerHTML = html;
+}
+
+function loadDamageHistory() {
+    document.getElementById('damage-content').innerHTML = '<div class="loading">Carregando historico...</div>';
+    fetch('/api/damage/sessions').then(function(r){return r.json();}).then(function(d){
+        var html = '';
+        if (!d.sessions || d.sessions.length == 0) {
+            html = '<div class="loading">Nenhuma sessao encontrada.</div>';
+        } else {
+            html = '<div style="display:flex;flex-direction:column;gap:8px;">';
+            for (var i = 0; i < d.sessions.length; i++) {
+                var s = d.sessions[i];
+                var jobName = JOB_MAP_DMG[s.job] || 'Job '+s.job;
+                var dur = s.ended_at ? Math.round((s.ended_at - s.started_at)/1000) : null;
+                html += '<div style="background:#16213e;border:1px solid ' + (s.active ? '#27ae60' : '#333') + ';border-radius:8px;padding:12px 16px;cursor:pointer;" onclick="loadSessionDetail(' + s.id + ')">';
+                html += '<div style="display:flex;justify-content:space-between;align-items:center;">';
+                html += '<div>';
+                html += '<div style="font-size:14px;font-weight:bold;color:#e94560;">' + s.char_name + ' <span style="font-size:11px;color:#aaa;">Lv.' + s.level + ' ' + jobName + '</span>' + (s.active ? ' <span style="color:#27ae60;font-size:10px;">&#9679; ATIVO</span>' : '') + '</div>';
+                html += '<div style="font-size:10px;color:#555;">' + s.account_name + ' | <span id="histmap-' + s.id + '">Map ' + s.mapid + '</span>' + (dur ? ' | ' + fmtTime(dur) : '') + '</div>';
+                html += '</div><div style="color:#aaa;font-size:12px;">Ver detalhes &#8250;</div>';
+                html += '</div>';
+                if (s.top_mobs && s.top_mobs.length > 0) {
+                    html += '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;">';
+                    html += '<span style="font-size:9px;color:#555;">Top mobs:</span>';
+                    for (var mi = 0; mi < s.top_mobs.length; mi++) {
+                        html += '<div style="display:flex;align-items:center;gap:3px;background:#0f3460;border-radius:4px;padding:2px 6px;">';
+                        html += '<img src="https://maplestory.io/api/GMS/83/mob/' + s.top_mobs[mi].mobid + '/icon" style="width:20px;height:20px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+                        html += '<span style="font-size:9px;color:#aaa;">x' + s.top_mobs[mi].kills + '</span>';
+                        html += '</div>';
+                    }
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+        }
+        document.getElementById('damage-content').innerHTML = html;
+        // Carrega nomes dos mapas
+        for (var i = 0; i < d.sessions.length; i++) {
+            (function(s) {
+                getMapName(s.mapid, 'histmap-' + s.id);
+            })(d.sessions[i]);
+        }
+    });
+}
+
+
+// === SCROLLS STASH ===
+document.getElementById('scroll-search').addEventListener('input', function() { renderScrolls(); });
+document.getElementById('scroll-acc-all-btn').addEventListener('click', function() {
+    curScrollAcc = null;
+    var bs = document.querySelectorAll('#scroll-accs .account-btn');
+    for (var i = 0; i < bs.length; i++) bs[i].classList.remove('active');
+    this.classList.add('active');
+    renderScrolls();
+});
+
+function loadScrolls() {
+    fetch('/api/scrolls').then(function(r){return r.json();}).then(function(d){
+        SCROLLS = d;
+        var html = '';
+        for (var i = 0; i < d.accounts.length; i++) {
+            var a = d.accounts[i];
+            html += '<button class="account-btn" id="scroll-acc-' + a.id + '">' + a.name + ' (' + a.total_types + ' tipos)</button>';
+        }
+        document.getElementById('scroll-accs').innerHTML = html;
+        for (var i = 0; i < d.accounts.length; i++) {
+            (function(acc) {
+                var el = document.getElementById('scroll-acc-' + acc.id);
+                if (el) el.addEventListener('click', function() {
+                    curScrollAcc = acc.id;
+                    var bs = document.querySelectorAll('#scroll-accs .account-btn');
+                    for (var j = 0; j < bs.length; j++) bs[j].classList.remove('active');
+                    document.getElementById('scroll-acc-all-btn').classList.remove('active');
+                    el.classList.add('active');
+                    renderScrolls();
+                });
+            })(d.accounts[i]);
+        }
+        if (d.accounts.length > 0) {
+            curScrollAcc = d.accounts[0].id;
+            document.getElementById('scroll-acc-' + curScrollAcc).classList.add('active');
+            document.getElementById('scroll-acc-all-btn').classList.remove('active');
+        }
+        renderScrolls();
+    });
+}
+
+function renderScrolls() {
+    if (!SCROLLS) return;
+    var srch = document.getElementById('scroll-search').value.toLowerCase();
+    var items = [];
+
+    if (curScrollAcc === null) {
+        // Merge de todas as contas
+        var merged = {};
+        for (var i = 0; i < SCROLLS.accounts.length; i++) {
+            var scrolls = SCROLLS.accounts[i].scrolls;
+            for (var j = 0; j < scrolls.length; j++) {
+                var s = scrolls[j];
+                if (merged[s.itemid]) {
+                    merged[s.itemid].quantity += s.quantity;
+                } else {
+                    merged[s.itemid] = {itemid: s.itemid, name: s.name, quantity: s.quantity};
+                }
+            }
+        }
+        items = Object.values(merged);
+    } else {
+        for (var i = 0; i < SCROLLS.accounts.length; i++) {
+            if (SCROLLS.accounts[i].id == curScrollAcc) {
+                items = SCROLLS.accounts[i].scrolls;
+                break;
+            }
+        }
+    }
+
+    if (srch) {
+        items = items.filter(function(s) {
+            return s.name.toLowerCase().indexOf(srch) >= 0 || ('' + s.itemid).indexOf(srch) >= 0;
+        });
+    }
+
+    var totalQty = items.reduce(function(a,b){ return a + b.quantity; }, 0);
+    document.getElementById('scroll-total').textContent = totalQty.toLocaleString();
+    document.getElementById('scroll-types').textContent = items.length;
+
+    items.sort(function(a,b){ return a.itemid - b.itemid; });
+
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+        var s = items[i];
+        html += '<div style="background:#16213e;border:1px solid #333;border-radius:8px;padding:8px;text-align:center;width:80px;cursor:pointer;" id="scr-' + s.itemid + '" onclick="copyScrollCmd(' + s.itemid + ',' + s.quantity + ')" title="Clique para copiar o comando">';
+        html += '<img src="https://maplestory.io/api/GMS/83/item/' + s.itemid + '/icon" style="width:36px;height:36px;object-fit:contain;image-rendering:pixelated;" onerror="this.style.opacity=0.2">';
+        html += '<div style="font-size:9px;color:#aaa;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="scrn-' + s.itemid + '">' + s.name + '</div>';
+        html += '<div style="font-size:11px;color:#f39c12;font-weight:bold;">x' + s.quantity + '</div>';
+        html += '<div style="font-size:8px;color:#555;">' + s.itemid + '</div>';
+        html += '</div>';
+    }
+    document.getElementById('scroll-grid').innerHTML = html || '<div class="loading">Nenhum scroll no stash.</div>';
+
+    // Carrega nomes
+    for (var i = 0; i < items.length; i++) {
+        (function(s) {
+            if (s.name && s.name.indexOf('Item ') < 0) return;
+            fetch('https://maplestory.io/api/GMS/83/item/' + s.itemid).then(function(r){return r.json();}).then(function(d){
+                if (d.description && d.description.name) {
+                    s.name = d.description.name;
+                    var el = document.getElementById('scrn-' + s.itemid);
+                    if (el) el.textContent = s.name;
+                }
+            }).catch(function(){});
+        })(items[i]);
+    }
+}
+
+function copyScrollCmd(itemid, qty) {
+    var cmd = '!scroll withdraw ' + itemid + ' ' + qty;
+    var ta = document.createElement('textarea');
+    ta.value = cmd;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    var el = document.getElementById('scr-' + itemid);
+    if (el) {
+        el.style.borderColor = '#27ae60';
+        setTimeout(function() { el.style.borderColor = '#333'; }, 1000);
+    }
+}
+
+loadEquip();
+</script>
+</body>
+</html>
