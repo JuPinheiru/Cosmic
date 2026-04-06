@@ -128,7 +128,6 @@ public final class UseCashItemHandler extends AbstractPacketHandler {
         if (itemType == 504) { // vip teleport rock
             String error1 = "Either the player could not be found or you were trying to teleport to an illegal location.";
             boolean vip = p.readByte() == 1 && itemId / 1000 >= 5041;
-            remove(c, position, itemId);
             boolean success = false;
             if (!vip) {
                 int mapId = p.readInt();
@@ -529,7 +528,6 @@ public final class UseCashItemHandler extends AbstractPacketHandler {
                 Shop shop = ShopFactory.getInstance().getShop(1338);
                 if (shop != null) {
                     shop.sendShop(c);
-                    remove(c, position, itemId);
                 }
             } else {
                 c.sendPacket(PacketCreator.enableActions());

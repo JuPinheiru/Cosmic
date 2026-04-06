@@ -65,7 +65,7 @@ import tools.IntervalBuilder;
 import tools.PacketCreator;
 import tools.Pair;
 import tools.Randomizer;
-
+import client.BotClient;
 import tools.DatabaseConnection;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -571,6 +571,7 @@ public class Monster extends AbstractLoadedLife {
         // thanks G h o s t, Alfred, Vcoc, BHB for poiting out a bug in detecting party members after membership transactions in a party took place
         if (YamlConfig.config.server.USE_ENFORCE_MOB_LEVEL_RANGE) {
             for (Character member : partyParticipation.keySet().iterator().next().getPartyMembersOnSameMap()) {
+                if (member.getMapId() != this.getMap().getId()) continue;
                 if (!leechInterval.inInterval(member.getLevel())) {
                     underleveled.add(member);
                     continue;
@@ -581,6 +582,7 @@ public class Monster extends AbstractLoadedLife {
             }
         } else {    // thanks Ari for noticing unused server flag after EXP system overhaul
             for (Character member : partyParticipation.keySet().iterator().next().getPartyMembersOnSameMap()) {
+                if (member.getMapId() != this.getMap().getId()) continue;
                 totalPartyLevel += member.getLevel();
                 expMembers.add(member);
             }
@@ -764,7 +766,7 @@ public class Monster extends AbstractLoadedLife {
             attacker.raiseQuestMobCount(getId());
 
             // Registra kill count por conta (só para players reais)
-            if (!attacker.isBot()) {
+            if (!(attacker.getClient() instanceof BotClient)) {
                 try (Connection con = DatabaseConnection.getConnection();
                      PreparedStatement ps = con.prepareStatement(
                              "INSERT INTO mob_kill_count (accountid, mobid, kills) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE kills = kills + 1")) {

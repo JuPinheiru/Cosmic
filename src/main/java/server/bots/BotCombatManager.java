@@ -285,6 +285,10 @@ class BotCombatManager {
         for (Skill skill : bot.getSkills().keySet()) {
             int lvl = bot.getSkillLevel(skill);
             if (lvl <= 0) continue;
+            int maxLvl = bot.getMasterLevel(skill);
+            if (maxLvl > 0 && lvl > maxLvl) lvl = maxLvl;
+            if (lvl > skill.getMaxLevel()) lvl = skill.getMaxLevel();
+            if (lvl <= 0) continue;
 
             StatEffect fx = skill.getEffect(lvl);
             int atk = fx.getAttackCount();
@@ -294,6 +298,7 @@ class BotCombatManager {
             if (isHealSkill(skill.getId())) {
                 entry.healSkillId = skill.getId();
             }
+
 
             if (atk > 0) {
                 if (mobs >= 2) {

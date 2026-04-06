@@ -5705,18 +5705,14 @@ public class Character extends AbstractCharacterObject {
 
     public List<Character> getPartyMembersOnSameMap() {
         List<Character> list = new LinkedList<>();
-        int thisMapHash = this.getMap().hashCode();
 
         prtLock.lock();
         try {
             if (party != null) {
                 for (PartyCharacter mpc : party.getMembers()) {
                     Character chr = mpc.getPlayer();
-                    if (chr != null) {
-                        MapleMap chrMap = chr.getMap();
-                        if (chrMap != null && chrMap.hashCode() == thisMapHash && chr.isLoggedinWorld()) {
-                            list.add(chr);
-                        }
+                    if (chr != null && chr.isLoggedinWorld()) {
+                        list.add(chr);
                     }
                 }
             }
@@ -8459,33 +8455,7 @@ public class Character extends AbstractCharacterObject {
                     }
                 }
 
-                // Copia cartas existentes da conta para o novo personagem
-                try (PreparedStatement psCopy = con.prepareStatement(
-                        "INSERT INTO monsterbook (charid, cardid, level) " +
-                                "SELECT ?, cardid, MAX(level) FROM monsterbook " +
-                                "WHERE charid IN (SELECT id FROM characters WHERE accountid = ? AND id != ?) " +
-                                "GROUP BY cardid")) {
-                    psCopy.setInt(1, this.id);
-                    psCopy.setInt(2, accountid);
-                    psCopy.setInt(3, this.id);
-                    psCopy.executeUpdate();
-                }
-
-                // Copia quests concluídas da conta para o novo personagem
-                try (PreparedStatement psQuest = con.prepareStatement(
-                        "INSERT INTO queststatus (characterid, quest, status, time, expires, forfeited, completed, info) " +
-                                "SELECT ?, quest, 2, time, expires, forfeited, completed, info " +
-                                "FROM queststatus WHERE characterid IN " +
-                                "(SELECT id FROM characters WHERE accountid = ? AND id != ?) AND status = 2 " +
-                                "GROUP BY quest")) {
-                    psQuest.setInt(1, this.id);
-                    psQuest.setInt(2, accountid);
-                    psQuest.setInt(3, this.id);
-                    psQuest.executeUpdate();
-                }
-
-
-                // Select a keybinding method
+                                // Select a keybinding method
                 int[] selectedKey;
                 int[] selectedType;
                 int[] selectedAction;
