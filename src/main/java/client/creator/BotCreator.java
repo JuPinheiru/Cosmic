@@ -11,7 +11,11 @@ import constants.id.MapId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import server.ItemInformationProvider;
+import tools.DatabaseConnection;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 /**
  * Creates bot/companion characters server-side using the same Character.getDefault +
  * insertNewChar pipeline as normal character creation, but without the client-packet
@@ -62,6 +66,19 @@ public class BotCreator extends CharacterFactory {
         if (!botChar.insertNewChar(recipe)) {
             log.error("insertNewChar failed for bot '{}'", name);
             return -1;
+        }
+
+        //      SET ON BD AS A BOT
+        int charId = botChar.getId();
+
+        try (Connection con = DatabaseConnection.getConnection();
+             PreparedStatement ps = con.prepareStatement("UPDATE characters SET is_bot = 1 WHERE id = ?")) {
+
+            ps.setInt(1, charId);
+            ps.executeUpdate();
+
+        } catch (SQLException e) {
+            e.printStackTrace();
         }
 
         log.info("Bot character '{}' created for account id {}", name, c.getAccID());

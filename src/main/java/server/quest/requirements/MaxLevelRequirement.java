@@ -50,6 +50,6 @@ public class MaxLevelRequirement extends AbstractQuestRequirement {
 
     @Override
     public boolean check(Character chr, Integer npcid) {
-        return maxLevel >= chr.getLevel();
+        return true;
     }
 }

@@ -66,6 +66,11 @@ import tools.PacketCreator;
 import tools.Pair;
 import tools.Randomizer;
 
+import tools.DatabaseConnection;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
 import java.awt.*;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -533,12 +538,7 @@ public class Monster extends AbstractLoadedLife {
     }
 
     private void distributePlayerExperience(Character chr, float exp, float partyBonusMod, int totalPartyLevel, boolean highestPartyDamager, boolean whiteExpGain, boolean hasPartySharers) {
-        float playerExp = (YamlConfig.config.server.EXP_SPLIT_COMMON_MOD * chr.getLevel()) / totalPartyLevel;
-        if (highestPartyDamager) {
-            playerExp += YamlConfig.config.server.EXP_SPLIT_MVP_MOD;
-        }
-
-        playerExp *= exp;
+        float playerExp = exp;
         float bonusExp = partyBonusMod * playerExp;
 
         this.giveExpToCharacter(chr, playerExp, bonusExp, whiteExpGain, hasPartySharers);
@@ -730,6 +730,10 @@ public class Monster extends AbstractLoadedLife {
             if (personalExp != null) {
                 personalExp *= getStatusExpMultiplier(attacker, hasPartySharers);
                 personalExp *= attacker.getExpRate();
+                float totalExpBonus = attacker.getCardBookBonusRate() + attacker.getQuestBonusRate();
+                if (totalExpBonus > 0) {
+                    personalExp *= (1.0f + totalExpBonus);
+                }
             } else {
                 personalExp = 0.0f;
             }
@@ -744,6 +748,10 @@ public class Monster extends AbstractLoadedLife {
             if (partyExp != null) {
                 partyExp *= getStatusExpMultiplier(attacker, hasPartySharers);
                 partyExp *= attacker.getExpRate();
+                float totalExpBonus = attacker.getCardBookBonusRate() + attacker.getQuestBonusRate();
+                if (totalExpBonus > 0) {
+                    partyExp *= (1.0f + totalExpBonus);
+                }
                 partyExp *= YamlConfig.config.server.PARTY_BONUS_EXP_RATE;
             } else {
                 partyExp = 0.0f;
@@ -754,8 +762,20 @@ public class Monster extends AbstractLoadedLife {
             attacker.gainExp(_personalExp, _partyExp, true, false, white);
             attacker.increaseEquipExp(_personalExp);
             attacker.raiseQuestMobCount(getId());
-        }
-    }
+
+            // Registra kill count por conta (só para players reais)
+            if (!attacker.isBot()) {
+                try (Connection con = DatabaseConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(
+                             "INSERT INTO mob_kill_count (accountid, mobid, kills) VALUES (?, ?, 1) ON DUPLICATE KEY UPDATE kills = kills + 1")) {
+                    ps.setInt(1, attacker.getAccountID());
+                    ps.setInt(2, getId());
+                    ps.executeUpdate();
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+            }
+    }}
 
     public List<MonsterDropEntry> retrieveRelevantDrops() {
         if (this.getStats().isFriendly()) {     // thanks Conrad for noticing friendly mobs not spawning loots after a recent update

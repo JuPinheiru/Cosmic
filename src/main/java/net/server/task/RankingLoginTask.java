@@ -69,7 +69,8 @@ public class RankingLoginTask implements Runnable {
                     int rankMove = 0;
                     rank++;
 
-                    final long lastlogin = rs.getTimestamp("lastlogin").getTime();
+                    java.sql.Timestamp lastLoginTs = rs.getTimestamp("lastlogin");
+                    final long lastlogin = (lastLoginTs != null) ? lastLoginTs.getTime() : 0L;
                     if (lastlogin < lastUpdate || rs.getInt("loggedin") > 0) {
                         rankMove = rs.getInt((job != -1 ? "jobRankMove" : "rankMove"));
                     }

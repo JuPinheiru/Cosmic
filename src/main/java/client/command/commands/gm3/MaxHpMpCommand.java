@@ -45,16 +45,14 @@ public class MaxHpMpCommand extends Command {
             statUpdate = Integer.parseInt(params[0]);
         } else {
             player.yellowMessage("Syntax: !maxhpmp [<playername>] <value>");
+            return; // <- também adicione esse return para não continuar sem valor
         }
 
         if (victim != null) {
-            int extraHp = victim.getCurrentMaxHp() - victim.getClientMaxHp();
-            int extraMp = victim.getCurrentMaxMp() - victim.getClientMaxMp();
-            statUpdate = Math.max(1 + Math.max(extraHp, extraMp), statUpdate);
-
-            int maxhpUpdate = statUpdate - extraHp;
-            int maxmpUpdate = statUpdate - extraMp;
-            victim.updateMaxHpMaxMp(maxhpUpdate, maxmpUpdate);
+            // Clamp entre 1 e 500000 (ou o limite que quiser)
+            int newMaxHp = Math.min(Math.max(statUpdate, 1), 500000);
+            int newMaxMp = Math.min(Math.max(statUpdate, 1), 500000);
+            victim.updateMaxHpMaxMp(newMaxHp, newMaxMp);
         } else {
             player.message("Player '" + params[0] + "' could not be found on this world.");
         }

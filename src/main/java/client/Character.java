@@ -100,6 +100,7 @@ import scripting.AbstractPlayerInteraction;
 import scripting.event.EventInstanceManager;
 import scripting.item.ItemScriptManager;
 import server.CashShop;
+import server.DamageTracker;
 import server.ExpLogger;
 import server.ExpLogger.ExpLogRecord;
 import server.ItemInformationProvider;
@@ -242,6 +243,13 @@ public class Character extends AbstractCharacterObject {
     private boolean equippedMesoMagnet = false, equippedItemPouch = false, equippedPetItemIgnore = false;
     private boolean usedSafetyCharm = false;
     private float autopotHpAlert, autopotMpAlert;
+    private float cardBookBonusRate = 0;
+    private int cardBookBonusStats = 0;
+    private float questBonusRate = 0;
+    private int questBonusStats = 0;
+    private int questBonusApplied = 0;
+    private int collectionBonusApplied = 0;
+    private int collectionBonus = 0;
     private int linkedLevel = 0;
     private String linkedName = null;
     private boolean finishedDojoTutorial;
@@ -350,6 +358,8 @@ public class Character extends AbstractCharacterObject {
     private final List<Ring> crushRings = new ArrayList<>();
     private final List<Ring> friendshipRings = new ArrayList<>();
     private boolean loggedIn = false;
+    private int cardBookBonusApplied = 0;
+    private int cardBonusApplied = 0;
     private boolean useCS;  //chaos scroll upon crafting item.
     private long npcCd;
     private int newWarpMap = -1;
@@ -364,6 +374,14 @@ public class Character extends AbstractCharacterObject {
     private boolean pendingNameChange; //only used to change name on logout, not to be relied upon elsewhere
     private long loginTime;
     private boolean chasing = false;
+
+
+    public float getQuestBonusRate() { return questBonusRate; }
+    public void setQuestBonusRate(float bonus) { this.questBonusRate = bonus; }
+    public int getQuestBonusStats() { return questBonusStats; }
+    public void setQuestBonusStats(int bonus) { this.questBonusStats = bonus; }
+    public int getQuestBonusApplied() { return questBonusApplied; }
+    public void setQuestBonusApplied(int bonus) { this.questBonusApplied = bonus; }
 
     private Character() {
         super.setListener(new AbstractCharacterListener() {
@@ -986,6 +1004,9 @@ public class Character extends AbstractCharacterObject {
         }
         this.setPosition(portal.getPosition());
         this.initialSpawnPoint = portal.getId();
+
+        // Inicia sessão de dano ao logar
+        DamageTracker.startSession(getId(), getAccountID(), map.getId(), getExp(), getMeso());
     }
 
     public String getMedalText() {
@@ -1839,6 +1860,9 @@ public class Character extends AbstractCharacterObject {
             map.addPlayer(this);
             visitMap(map);
 
+            // Inicia sessão de dano no novo mapa
+            DamageTracker.startSession(getId(), getAccountID(), map.getId(), getExp(), getMeso());
+
             prtLock.lock();
             try {
                 if (party != null) {
@@ -1949,6 +1973,14 @@ public class Character extends AbstractCharacterObject {
         }
     }
 
+    private long lastHpPotionTime = 0;
+    private long lastMpPotionTime = 0;
+
+    public long getLastHpPotionTime() { return lastHpPotionTime; }
+    public void setLastHpPotionTime(long time) { this.lastHpPotionTime = time; }
+    public long getLastMpPotionTime() { return lastMpPotionTime; }
+    public void setLastMpPotionTime(long time) { this.lastMpPotionTime = time; }
+
     public void checkMessenger() {
         if (messenger != null && messengerposition < 4 && messengerposition > -1) {
             World worldz = getWorldServer();
@@ -2048,6 +2080,39 @@ public class Character extends AbstractCharacterObject {
             }
         }
         return false;
+    }
+
+
+    private boolean tryAutoDepositToStorage(Item item) {
+        int itemId = item.getItemId();
+        int type = itemId / 1000000;
+        // Só USE (type=2) e ETC (type=4)
+        if (type != 2 && type != 4) {
+            return false;
+        }
+
+        Storage storage = this.getStorage();
+        if (storage == null || storage.isFull()) {
+            return false;
+        }
+
+        // Verifica se já tem esse itemId no storage
+        boolean hasItem = false;
+        for (Item storageItem : storage.getItems()) {
+            if (storageItem.getItemId() == itemId) {
+                hasItem = true;
+                break;
+            }
+        }
+        if (!hasItem) {
+            return false;
+        }
+
+        // Deposita no storage
+        storage.store(item.copy());
+        storage.arrangeItems(this.getClient());
+        this.setUsedStorage();
+        return true;
     }
 
     public final void pickupItem(MapObject ob) {
@@ -2164,6 +2229,8 @@ public class Character extends AbstractCharacterObject {
                             showHint("You have earned #e#b" + nxGain + " NX#k#n. (" + this.getCashShop().getCash(CashShop.NX_CREDIT) + " NX)", 300);
                         }
                     } else if (applyConsumeOnPickup(mItem.getItemId())) {
+                    } else if (tryAutoDepositToStorage(mItem)) {
+                        // item foi direto pro storage
                     } else if (InventoryManipulator.addFromDrop(client, mItem, true)) {
                         if (mItem.getItemId() == ItemId.ARPQ_SPIRIT_JEWEL) {
                             updateAriantScore();
@@ -3234,6 +3301,12 @@ public class Character extends AbstractCharacterObject {
                 leftover = nextExp - Integer.MAX_VALUE;
             }
             updateSingleStat(Stat.EXP, exp.addAndGet((int) total));
+
+            // Log exp no DamageTracker
+            if (total > 0) {
+                DamageTracker.logExpGain(getId(), total);
+            }
+
             totalExpGained += total;
             if (show) {
                 announceExpGain(gain, equip, party, inChat, white);
@@ -3334,8 +3407,14 @@ public class Character extends AbstractCharacterObject {
                 gain = -meso.get();
             }
             nextMeso = meso.addAndGet(gain);
+
         } finally {
             petLock.unlock();
+        }
+
+        // Log meso no DamageTracker
+        if (gain > 0) {
+            DamageTracker.logMesoGain(getId(), gain);
         }
 
         if (gain != 0) {
@@ -5529,6 +5608,14 @@ public class Character extends AbstractCharacterObject {
         }
     }
 
+    public int getCollectionBonus() {
+        return collectionBonus;
+    }
+
+    public void setCollectionBonus(int bonus) {
+        this.collectionBonus = bonus;
+    }
+
     public MonsterBook getMonsterBook() {
         return monsterbook;
     }
@@ -6444,8 +6531,8 @@ public class Character extends AbstractCharacterObject {
             addhp += Randomizer.rand(20, 24);
             addmp += Randomizer.rand(14, 16);
         } else if (job.isA(Job.GM)) {
-            addhp += 300000;
-            addmp += 300000;
+            addhp += 30000;
+            addmp += 30000;
         } else if (job.isA(Job.PIRATE) || job.isA(Job.THUNDERBREAKER1)) {
             improvingMaxHP = isCygnus() ? SkillFactory.getSkill(ThunderBreaker.IMPROVE_MAX_HP) : SkillFactory.getSkill(Brawler.IMPROVE_MAX_HP);
             improvingMaxHPLevel = getSkillLevel(improvingMaxHP);
@@ -6579,12 +6666,17 @@ public class Character extends AbstractCharacterObject {
         if (familyEntry != null) {
             familyEntry.giveReputationToSenior(YamlConfig.config.server.FAMILY_REP_PER_LEVELUP, true);
             FamilyEntry senior = familyEntry.getSenior();
-            if (senior != null) { //only send the message to direct senior
+            if (senior != null) {
                 Character seniorChr = senior.getChr();
                 if (seniorChr != null) {
                     seniorChr.sendPacket(PacketCreator.levelUpMessage(1, level, getName()));
                 }
             }
+        }
+
+        // Notify autonomous bot registry for map migration on level up
+        if (isBot()) {
+            server.bots.AutonomousBotRegistry.getInstance().onBotLevelUp(this);
         }
     }
 
@@ -6860,6 +6952,9 @@ public class Character extends AbstractCharacterObject {
             ret.remainingAp = rs.getInt("ap");
             ret.loadCharSkillPoints(rs.getString("sp").split(","));
             ret.exp.set(rs.getInt("exp"));
+            ret.cardBonusApplied = rs.getInt("cardBonusApplied");
+            ret.collectionBonusApplied = rs.getInt("collectionBonusApplied");
+            ret.questBonusApplied = rs.getInt("questBonusApplied");
             ret.fame = rs.getInt("fame");
             ret.gachaexp.set(rs.getInt("gachaexp"));
             ret.mapid = rs.getInt("map");
@@ -7027,6 +7122,10 @@ public class Character extends AbstractCharacterObject {
                     ret.buddylist = new BuddyList(buddyCapacity);
                     ret.lastExpGainTime = rs.getTimestamp("lastExpGainTime").getTime();
                     ret.canRecvPartySearchInvite = rs.getBoolean("partySearch");
+                    ret.isBot = rs.getBoolean("is_bot");
+                    ret.cardBonusApplied = rs.getInt("cardBonusApplied");
+                    ret.collectionBonusApplied = rs.getInt("collectionBonusApplied");
+                    ret.questBonusApplied = rs.getInt("questBonusApplied");
 
                     wserv = Server.getInstance().getWorld(ret.world);
 
@@ -7174,7 +7273,7 @@ public class Character extends AbstractCharacterObject {
             }
 
             // Account info
-            try (PreparedStatement ps = con.prepareStatement("SELECT name, characterslots, language FROM accounts WHERE id = ?", Statement.RETURN_GENERATED_KEYS)) {
+            try (PreparedStatement ps = con.prepareStatement("SELECT name, characterslots, language, cardBookBonusRate, cardBookBonusStats, collectionBonus, questBonusRate, questBonusStats FROM accounts WHERE id = ?", Statement.RETURN_GENERATED_KEYS)) {
                 ps.setInt(1, ret.accountid);
 
                 try (ResultSet rs = ps.executeQuery()) {
@@ -7183,7 +7282,12 @@ public class Character extends AbstractCharacterObject {
 
                         retClient.setAccountName(rs.getString("name"));
                         retClient.setCharacterSlots(rs.getByte("characterslots"));
-                        retClient.setLanguage(rs.getInt("language"));   // thanks Zein for noticing user language not overriding default once player is in-game
+                        retClient.setLanguage(rs.getInt("language"));
+                        ret.cardBookBonusRate = rs.getFloat("cardBookBonusRate");
+                        ret.cardBookBonusStats = rs.getInt("cardBookBonusStats");
+                        ret.collectionBonus = rs.getInt("collectionBonus");
+                        ret.questBonusRate = rs.getFloat("questBonusRate");
+                        ret.questBonusStats = rs.getInt("questBonusStats");
                     }
                 }
             }
@@ -7419,11 +7523,37 @@ public class Character extends AbstractCharacterObject {
                     wserv.loadAccountStorage(ret.accountid);
                     ret.storage = wserv.getAccountStorage(ret.accountid);
                 }
-                
+
+
                 int startHp = ret.hp, startMp = ret.mp;
+
+// aplica bonus do monster card book
+                int diff = ret.cardBookBonusStats - ret.cardBonusApplied;
+
+                if (diff > 0) {
+                    ret.str += diff;
+                    ret.dex += diff;
+                    ret.int_ += diff;
+                    ret.luk += diff;
+
+                    ret.cardBonusApplied = ret.cardBookBonusStats;
+                }
+
+// aplica bonus da collection
+                int collectionDiff = ret.collectionBonus - ret.collectionBonusApplied;
+
+                if (collectionDiff > 0) {
+                    ret.str += collectionDiff;
+                    ret.dex += collectionDiff;
+                    ret.int_ += collectionDiff;
+                    ret.luk += collectionDiff;
+
+                    ret.collectionBonusApplied = ret.collectionBonus;
+
+                }
+
                 ret.reapplyLocalStats();
                 ret.changeHpMp(startHp, startMp, true);
-                //ret.resetBattleshipHp();
             }
 
             final int mountid = ret.getJobType() * 10000000 + 1004;
@@ -7751,6 +7881,11 @@ public class Character extends AbstractCharacterObject {
     }
 
     private void reapplyLocalStats() {
+        StackTraceElement[] stack = new Exception().getStackTrace();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 1; i < Math.min(5, stack.length); i++) {
+            sb.append(stack[i].toString()).append(" | ");
+        }
         effLock.lock();
         chrLock.lock();
         statWlock.lock();
@@ -7780,8 +7915,8 @@ public class Character extends AbstractCharacterObject {
                 localmaxmp += (hbmp.doubleValue() / 100) * localmaxmp;
             }
 
-            localmaxhp = Math.min(300000, localmaxhp);
-            localmaxmp = Math.min(300000, localmaxmp);
+            localmaxhp = Math.min(30000, localmaxhp);
+            localmaxmp = Math.min(30000, localmaxmp);
 
             StatEffect combo = getBuffEffect(BuffStat.ARAN_COMBO);
             if (combo != null) {
@@ -7878,11 +8013,53 @@ public class Character extends AbstractCharacterObject {
                 }
                 // Add throwing stars to dmg.
             }
+
+            // Monster Book stats bonus
+            localstr += cardBookBonusStats;
+            localdex += cardBookBonusStats;
+            localint_ += cardBookBonusStats;
+            localluk += cardBookBonusStats;
+
+            // Quest stats bonus
+            localstr += questBonusStats;
+            localdex += questBonusStats;
+            localint_ += questBonusStats;
+            localluk += questBonusStats;
+
+            // Collection stats bonus
+            localstr += collectionBonus;
+            localdex += collectionBonus;
+            localint_ += collectionBonus;
+            localluk += collectionBonus;
+
+            // Mensagem de boas vindas com bonus
+            //if (cardBookBonusStats > 0 || cardBookBonusRate > 0) {
+            //    dropMessage(5, "[Monster Book] Bonus ativos por cartas nivel 5: +" + Math.round(cardBookBonusRate * 100) + "% EXP");
+            //}
+
         } finally {
             statWlock.unlock();
             chrLock.unlock();
             effLock.unlock();
         }
+    }
+
+    private Storage originalStorage = null;
+
+    public void openVirtualStorage(Storage virtual) {
+        originalStorage = storage;
+        storage = virtual;
+    }
+
+    public void closeVirtualStorage() {
+        if (originalStorage != null) {
+            storage = originalStorage;
+            originalStorage = null;
+        }
+    }
+
+    public boolean hasVirtualStorage() {
+        return originalStorage != null;
     }
 
     public List<Pair<Stat, Integer>> recalcLocalStats() {
@@ -8219,7 +8396,7 @@ public class Character extends AbstractCharacterObject {
 
             try {
                 // Character info
-                try (PreparedStatement ps = con.prepareStatement("INSERT INTO characters (str, dex, luk, `int`, gm, skincolor, gender, job, hair, face, map, meso, spawnpoint, accountid, name, world, hp, mp, maxhp, maxmp, level, ap, sp, equipslots, useslots, setupslots, etcslots) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
+                try (PreparedStatement ps = con.prepareStatement("INSERT INTO characters (str, dex, luk, `int`, gm, skincolor, gender, job, hair, face, map, meso, spawnpoint, accountid, name, world, hp, mp, maxhp, maxmp, level, ap, sp, cardBonusApplied, collectionBonusApplied, questBonusApplied, equipslots, useslots, setupslots, etcslots) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", Statement.RETURN_GENERATED_KEYS)) {
                     ps.setInt(1, str);
                     ps.setInt(2, dex);
                     ps.setInt(3, luk);
@@ -8250,10 +8427,21 @@ public class Character extends AbstractCharacterObject {
                     }
                     String sp = sps.toString();
                     ps.setString(23, sp.substring(0, sp.length() - 1));
-                    ps.setByte(24, getInventory(InventoryType.EQUIP).getSlotLimit());
-                    ps.setByte(25, getInventory(InventoryType.USE).getSlotLimit());
-                    ps.setByte(26, getInventory(InventoryType.SETUP).getSlotLimit());
-                    ps.setByte(27, getInventory(InventoryType.ETC).getSlotLimit());
+
+                    ps.setInt(24, cardBonusApplied);
+                    ps.setInt(25, collectionBonusApplied);
+                    ps.setInt(26, questBonusApplied);
+
+                    ps.setByte(27, getInventory(InventoryType.EQUIP).getSlotLimit());
+                    ps.setByte(28, getInventory(InventoryType.USE).getSlotLimit());
+                    ps.setByte(29, getInventory(InventoryType.SETUP).getSlotLimit());
+                    ps.setByte(30, getInventory(InventoryType.ETC).getSlotLimit());
+
+
+                    for (int j : remainingSp) {
+                        sps.append(j);
+                        sps.append(",");
+                    }
 
                     int updateRows = ps.executeUpdate();
                     if (updateRows < 1) {
@@ -8270,6 +8458,32 @@ public class Character extends AbstractCharacterObject {
                         }
                     }
                 }
+
+                // Copia cartas existentes da conta para o novo personagem
+                try (PreparedStatement psCopy = con.prepareStatement(
+                        "INSERT INTO monsterbook (charid, cardid, level) " +
+                                "SELECT ?, cardid, MAX(level) FROM monsterbook " +
+                                "WHERE charid IN (SELECT id FROM characters WHERE accountid = ? AND id != ?) " +
+                                "GROUP BY cardid")) {
+                    psCopy.setInt(1, this.id);
+                    psCopy.setInt(2, accountid);
+                    psCopy.setInt(3, this.id);
+                    psCopy.executeUpdate();
+                }
+
+                // Copia quests concluídas da conta para o novo personagem
+                try (PreparedStatement psQuest = con.prepareStatement(
+                        "INSERT INTO queststatus (characterid, quest, status, time, expires, forfeited, completed, info) " +
+                                "SELECT ?, quest, 2, time, expires, forfeited, completed, info " +
+                                "FROM queststatus WHERE characterid IN " +
+                                "(SELECT id FROM characters WHERE accountid = ? AND id != ?) AND status = 2 " +
+                                "GROUP BY quest")) {
+                    psQuest.setInt(1, this.id);
+                    psQuest.setInt(2, accountid);
+                    psQuest.setInt(3, this.id);
+                    psQuest.executeUpdate();
+                }
+
 
                 // Select a keybinding method
                 int[] selectedKey;
@@ -8383,12 +8597,13 @@ public class Character extends AbstractCharacterObject {
             con.setTransactionIsolation(Connection.TRANSACTION_READ_UNCOMMITTED);
 
             try {
-                try (PreparedStatement ps = con.prepareStatement("UPDATE characters SET level = ?, fame = ?, str = ?, dex = ?, luk = ?, `int` = ?, exp = ?, gachaexp = ?, hp = ?, mp = ?, maxhp = ?, maxmp = ?, sp = ?, ap = ?, gm = ?, skincolor = ?, gender = ?, job = ?, hair = ?, face = ?, map = ?, meso = ?, hpMpUsed = ?, spawnpoint = ?, party = ?, buddyCapacity = ?, messengerid = ?, messengerposition = ?, mountlevel = ?, mountexp = ?, mounttiredness= ?, equipslots = ?, useslots = ?, setupslots = ?, etcslots = ?,  monsterbookcover = ?, vanquisherStage = ?, dojoPoints = ?, lastDojoStage = ?, finishedDojoTutorial = ?, vanquisherKills = ?, matchcardwins = ?, matchcardlosses = ?, matchcardties = ?, omokwins = ?, omoklosses = ?, omokties = ?, dataString = ?, fquest = ?, jailexpire = ?, partnerId = ?, marriageItemId = ?, lastExpGainTime = ?, ariantPoints = ?, partySearch = ? WHERE id = ?", Statement.RETURN_GENERATED_KEYS)) {
+                try (PreparedStatement ps = con.prepareStatement("UPDATE characters SET level = ?, fame = ?, str = ?, dex = ?, luk = ?, `int` = ?, exp = ?, gachaexp = ?, hp = ?, mp = ?, maxhp = ?, maxmp = ?, sp = ?, ap = ?, gm = ?, skincolor = ?, gender = ?, job = ?, hair = ?, face = ?, map = ?, meso = ?, hpMpUsed = ?, spawnpoint = ?, party = ?, buddyCapacity = ?, messengerid = ?, messengerposition = ?, mountlevel = ?, mountexp = ?, mounttiredness= ?, equipslots = ?, useslots = ?, setupslots = ?, etcslots = ?,  monsterbookcover = ?, vanquisherStage = ?, dojoPoints = ?, lastDojoStage = ?, finishedDojoTutorial = ?, vanquisherKills = ?, matchcardwins = ?, matchcardlosses = ?, matchcardties = ?, omokwins = ?, omoklosses = ?, omokties = ?, dataString = ?, fquest = ?, jailexpire = ?, partnerId = ?, marriageItemId = ?, lastExpGainTime = ?, ariantPoints = ?, partySearch = ?, cardBonusApplied = ?, collectionBonusApplied = ?, questBonusApplied = ? WHERE id = ?", Statement.RETURN_GENERATED_KEYS)) {
                     ps.setInt(1, level);    // thanks CanIGetaPR for noticing an unnecessary "level" limitation when persisting DB data
                     ps.setInt(2, fame);
 
                     effLock.lock();
                     statWlock.lock();
+
                     try {
                         ps.setInt(3, str);
                         ps.setInt(4, dex);
@@ -8497,7 +8712,10 @@ public class Character extends AbstractCharacterObject {
                     ps.setTimestamp(53, new Timestamp(lastExpGainTime));
                     ps.setInt(54, ariantPoints);
                     ps.setBoolean(55, canRecvPartySearchInvite);
-                    ps.setInt(56, id);
+                    ps.setInt(56, cardBonusApplied);
+                    ps.setInt(57, collectionBonusApplied);
+                    ps.setInt(58, questBonusApplied);
+                    ps.setInt(59, id); // era 58
 
                     int updateRows = ps.executeUpdate();
                     if (updateRows < 1) {
@@ -8756,6 +8974,18 @@ public class Character extends AbstractCharacterObject {
                 if (storage != null && usedStorage) {
                     storage.saveToDB(con);
                     usedStorage = false;
+                }
+
+// Monster Book bonus save
+                try (PreparedStatement psBook = con.prepareStatement("UPDATE accounts SET cardBookBonusRate = ?, cardBookBonusStats = ?, collectionBonus = ?, questBonusRate = ?, questBonusStats = ? WHERE id = ?")) {
+                    psBook.setFloat(1, cardBookBonusRate);
+                    psBook.setInt(2, cardBookBonusStats);
+                    psBook.setInt(3, collectionBonus);
+                    psBook.setFloat(4, questBonusRate);
+                    psBook.setInt(5, questBonusStats);
+                    psBook.setInt(6, accountid); // era 4
+
+                    psBook.executeUpdate();
                 }
 
                 con.commit();
@@ -9066,7 +9296,7 @@ public class Character extends AbstractCharacterObject {
 
     private int calcHpRatioUpdate(int curpoint, int maxpoint, int diffpoint) {
         int curMax = maxpoint;
-        int nextMax = Math.min(300000, maxpoint + diffpoint);
+        int nextMax = Math.min(30000, maxpoint + diffpoint);
 
         float temp = curpoint * nextMax;
         int ret = (int) Math.ceil(temp / curMax);
@@ -9077,7 +9307,7 @@ public class Character extends AbstractCharacterObject {
 
     private int calcMpRatioUpdate(int curpoint, int maxpoint, int diffpoint) {
         int curMax = maxpoint;
-        int nextMax = Math.min(300000, maxpoint + diffpoint);
+        int nextMax = Math.min(30000, maxpoint + diffpoint);
 
         float temp = curpoint * nextMax;
         int ret = (int) Math.ceil(temp / curMax);
@@ -10302,6 +10532,7 @@ public class Character extends AbstractCharacterObject {
     }
 
     public void logOff() {
+        DamageTracker.endSession(getId());
         this.loggedIn = false;
 
         try (Connection con = DatabaseConnection.getConnection();
@@ -11040,5 +11271,27 @@ public class Character extends AbstractCharacterObject {
 
     public void setChasing(boolean chasing) {
         this.chasing = chasing;
+    }
+
+    public float getCardBookBonusRate() {
+        return cardBookBonusRate;
+    }
+
+    public void setCardBookBonusRate(float bonus) {
+        this.cardBookBonusRate = bonus;
+    }
+
+    public int getCardBookBonusStats() {
+        return cardBookBonusStats;
+    }
+
+    public void setCardBookBonusStats(int bonus) {
+        this.cardBookBonusStats = bonus;
+    }
+
+    private boolean isBot = false;
+
+    public boolean isBot() {
+        return isBot;
     }
 }

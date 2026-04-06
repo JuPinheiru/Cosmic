@@ -84,6 +84,30 @@ public final class MonsterBook {
                 calculateLevel();
             }
 
+            // Monster Book bonus: card completado ao chegar em level 5
+            if (qty == 4) {
+                Character chr = c.getPlayer();
+                float newRate = chr.getCardBookBonusRate() + 0.05f;
+                int newStats = chr.getCardBookBonusStats() + 1;
+
+                chr.setCardBookBonusRate(newRate);
+                chr.setCardBookBonusStats(newStats);
+
+                try (Connection con = DatabaseConnection.getConnection();
+                     PreparedStatement ps = con.prepareStatement(
+                             "UPDATE accounts SET cardBookBonusRate = ?, cardBookBonusStats = ? WHERE id = ?")) {
+                    ps.setFloat(1, newRate);
+                    ps.setInt(2, newStats);
+                    ps.setInt(3, chr.getAccountID());
+                    ps.executeUpdate();
+                } catch (SQLException e) {
+                    e.printStackTrace();
+                }
+
+                chr.equipChanged();
+                chr.message("Monster Book completo! +" + Math.round(newRate * 100) + "% EXP e +" + newStats + " ALL STATS!");
+            }
+
             c.sendPacket(PacketCreator.addCard(false, cardid, qty + 1));
             c.sendPacket(PacketCreator.showGainCard());
         } else {
@@ -182,25 +206,30 @@ public final class MonsterBook {
 
     public void saveCards(Connection con, int chrId) throws SQLException {
         final String query = """
-                INSERT INTO monsterbook (charid, cardid, level)
-                VALUES (?, ?, ?)
-                ON DUPLICATE KEY UPDATE level = ?;
-                """;
+            INSERT INTO monsterbook (charid, cardid, level)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE level = ?;
+            """;
+
+        try (PreparedStatement disableTrigger = con.prepareStatement("SET @disable_monsterbook_trigger = 1")) {
+            disableTrigger.execute();
+        }
+
         try (final PreparedStatement ps = con.prepareStatement(query)) {
             for (Map.Entry<Integer, Integer> cardAndLevel : cards.entrySet()) {
                 final int card = cardAndLevel.getKey();
                 final int level = cardAndLevel.getValue();
-                // insert
                 ps.setInt(1, chrId);
                 ps.setInt(2, card);
                 ps.setInt(3, level);
-
-                // update
                 ps.setInt(4, level);
-
                 ps.addBatch();
             }
             ps.executeBatch();
+        }
+
+        try (PreparedStatement enableTrigger = con.prepareStatement("SET @disable_monsterbook_trigger = 0")) {
+            enableTrigger.execute();
         }
     }
 

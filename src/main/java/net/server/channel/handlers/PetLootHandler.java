@@ -1,24 +1,3 @@
-/*
-	This file is part of the OdinMS Maple Story Server
-    Copyright (C) 2008 Patrick Huy <patrick.huy@frz.cc>
-		       Matthias Butz <matze@odinms.de>
-		       Jan Christian Meyer <vimes@odinms.de>
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU Affero General Public License as
-    published by the Free Software Foundation version 3 as published by
-    the Free Software Foundation. You may not use, modify or distribute
-    this program under any other version of the GNU Affero General Public
-    License.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU Affero General Public License for more details.
-
-    You should have received a copy of the GNU Affero General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
 package net.server.channel.handlers;
 
 import client.Character;
@@ -29,14 +8,14 @@ import net.packet.InPacket;
 import server.maps.MapItem;
 import server.maps.MapObject;
 import tools.PacketCreator;
+import java.util.Arrays;
+import java.util.List;
+import server.maps.MapObjectType;
 
 import java.util.Set;
 
-/**
- * @author TheRamon
- * @author Ronan
- */
 public final class PetLootHandler extends AbstractPacketHandler {
+
     @Override
     public final void handlePacket(InPacket p, Client c) {
         Character chr = c.getPlayer();
@@ -50,9 +29,16 @@ public final class PetLootHandler extends AbstractPacketHandler {
 
         p.skip(13);
         int oid = p.readInt();
+
         MapObject ob = chr.getMap().getMapObject(oid);
+        if (!(ob instanceof MapItem)) {
+            c.sendPacket(PacketCreator.enableActions());
+            return;
+        }
+
+        MapItem mapitem = (MapItem) ob;
+
         try {
-            MapItem mapitem = (MapItem) ob;
             if (mapitem.getMeso() > 0) {
                 if (!chr.isEquippedMesoMagnet()) {
                     c.sendPacket(PacketCreator.enableActions());
@@ -81,13 +67,33 @@ public final class PetLootHandler extends AbstractPacketHandler {
                 }
             }
 
-            chr.pickupItem(ob, petIndex);
-            // vac: needs cooldown  or very laggy
-//            List<MapObject> list = chr.getMap().getMapObjectsInRange(chr.getPosition(), Double.POSITIVE_INFINITY, Arrays.asList(MapObjectType.ITEM));
-//            for (MapObject item : list) {
-//                chr.pickupItem(item, petIndex);
-//            }
-        } catch (NullPointerException | ClassCastException e) {
+            if (!mapitem.canBePickedBy(chr)) {
+                c.sendPacket(PacketCreator.enableActions());
+                return;
+            }
+
+            // Verifica se é bot - bots usam loot normal, players usam vac
+            if (chr.isBot()) {
+                if (!mapitem.canBePickedBy(chr)) {
+                    c.sendPacket(PacketCreator.enableActions());
+                    return;
+                }
+                chr.pickupItem(ob, petIndex);
+            } else {
+                List<MapObject> list = chr.getMap().getMapObjectsInRange(
+                        chr.getPosition(), Double.POSITIVE_INFINITY,
+                        Arrays.asList(MapObjectType.ITEM)
+                );
+                for (MapObject mapObj : list) {
+                    if (!(mapObj instanceof MapItem)) continue;
+                    MapItem mi = (MapItem) mapObj;
+                    if (!mi.canBePickedBy(chr)) continue;
+                    chr.pickupItem(mapObj, petIndex);
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
             c.sendPacket(PacketCreator.enableActions());
         }
     }

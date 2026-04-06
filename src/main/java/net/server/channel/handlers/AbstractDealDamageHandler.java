@@ -101,6 +101,8 @@ import server.maps.MapleMap;
 import tools.PacketCreator;
 import tools.Randomizer;
 
+import server.DamageTracker;
+
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -287,6 +289,12 @@ public abstract class AbstractDealDamageHandler extends AbstractPacketHandler {
                         totDamageToOneMonster += eachd;
                     }
                     totDamage += totDamageToOneMonster;
+
+                    // Log dano no DamageTracker
+                    if (totDamageToOneMonster > 0) {
+                        DamageTracker.logDamage(player.getId(), attack.skill, monster.getId(), totDamageToOneMonster, false);
+                    }
+
                     monster.aggroMonsterDamage(player, totDamageToOneMonster);
                     if (player.getBuffedValue(BuffStat.PICKPOCKET) != null && (attack.skill == 0 || attack.skill == Rogue.DOUBLE_STAB || attack.skill == Bandit.SAVAGE_BLOW || attack.skill == ChiefBandit.ASSAULTER || attack.skill == ChiefBandit.BAND_OF_THIEVES || attack.skill == Shadower.ASSASSINATE || attack.skill == Shadower.TAUNT || attack.skill == Shadower.BOOMERANG_STEP)) {
                         Skill pickpocket = SkillFactory.getSkill(ChiefBandit.PICKPOCKET);

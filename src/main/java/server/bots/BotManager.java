@@ -508,18 +508,6 @@ public class BotManager {
         }
     }
 
-    public void syncPartyBotsQuestComplete(Character source, Quest quest, int npc, Integer selection) {
-        if (quest == null) {
-            return;
-        }
-
-        int resolvedNpc = resolveQuestNpc(source, quest, npc);
-        for (Character bot : getPartyBots(source)) {
-            ensureQuestStarted(bot, quest, resolvedNpc);
-            quest.forceCompleteWithActions(bot, resolvedNpc, selection);
-        }
-    }
-
     public String manualTradeGreeting() {
         return randomReply(List.of(
                 "?",
@@ -754,7 +742,7 @@ public class BotManager {
                     .getCharacterById(ownerCharId);
             entry.owner = owner;
         }
-        if (owner == null) {
+        if (owner == null && !AutonomousBotRegistry.getInstance().isAutonomous(bot.getId())) {
             entry.following = false;
             return;
         }
@@ -1230,10 +1218,14 @@ public class BotManager {
         if (!entry.grinding) return;
         int[] pots = countPotions(bot);
         if (pots[0] < cfg.POT_STOP && bot.getHp() < bot.getMaxHp() * 0.4f) {
-            entry.grinding = false;
-            entry.following = true;
-            botSay(bot, "low on pots!! walking to you");
-            bot.changeFaceExpression(Emote.GLARE.getValue());
+            if (AutonomousBotRegistry.getInstance().isAutonomous(bot.getId())) {
+                BotRestockManager.startRestock(entry, bot);
+            } else {
+                entry.grinding = false;
+                entry.following = true;
+                botSay(bot, "low on pots!! walking to you");
+                bot.changeFaceExpression(Emote.GLARE.getValue());
+            }
         }
     }
 

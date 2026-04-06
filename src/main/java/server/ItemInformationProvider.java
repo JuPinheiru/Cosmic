@@ -375,7 +375,7 @@ public class ItemInformationProvider {
                 if (ItemConstants.getInventoryType(itemId).getType() == InventoryType.EQUIP.getType()) {
                     ret = 1;
                 } else {
-                    ret = 100;
+                    ret = 9999;
                 }
             } else {
                 ret = (short) DataTool.getInt(smEntry);

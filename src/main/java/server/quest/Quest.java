@@ -342,14 +342,13 @@ public class Quest {
                     return;
                 }
             }
-            forceComplete(chr, npc, false);
+            forceComplete(chr, npc);
             for (AbstractQuestAction a : acts) {
                 a.run(chr, selection);
             }
             if (!this.hasNextQuestAction()) {
                 chr.announceUpdateQuest(Character.DelayedQuestUpdate.INFO, chr.getQuest(this));
             }
-            BotManager.getInstance().syncPartyBotsQuestComplete(chr, this, npc, selection);
         }
     }
 
@@ -415,10 +414,6 @@ public class Quest {
     }
 
     public boolean forceComplete(Character chr, int npc) {
-        return forceComplete(chr, npc, true);
-    }
-
-    private boolean forceComplete(Character chr, int npc, boolean syncPartyBots) {
         if (timeLimit > 0) {
             chr.sendPacket(PacketCreator.removeQuestTimeLimit(id));
         }
@@ -429,11 +424,42 @@ public class Quest {
         newStatus.setCompletionTime(System.currentTimeMillis());
         chr.updateQuestStatus(newStatus);
 
+        // Quest bonus: +1% EXP e +2 stats a cada 10 quests
+        try (java.sql.Connection con = tools.DatabaseConnection.getConnection()) {
+            // Conta quests concluídas
+            try (java.sql.PreparedStatement ps = con.prepareStatement(
+                    "SELECT COUNT(DISTINCT qs.quest) as total FROM queststatus qs " +
+                            "JOIN characters c ON c.id = qs.characterid " +
+                            "WHERE c.accountid = ? AND qs.status = 2 AND qs.quest > 0")) {
+                ps.setInt(1, chr.getAccountID());
+                try (java.sql.ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        int totalQuests = rs.getInt("total");
+                        float newRate = totalQuests * 0.01f;
+                        int newStats = (totalQuests / 10) * 2;
+
+                        chr.setQuestBonusRate(newRate);
+                        chr.setQuestBonusStats(newStats);
+
+                        try (java.sql.PreparedStatement ps2 = con.prepareStatement(
+                                "UPDATE accounts SET questBonusRate = ?, questBonusStats = ? WHERE id = ?")) {
+                            ps2.setFloat(1, newRate);
+                            ps2.setInt(2, newStats);
+                            ps2.setInt(3, chr.getAccountID());
+                            ps2.executeUpdate();
+                        }
+
+                        chr.equipChanged();
+                        chr.message("Quest concluida! EXP total: +" + Math.round(newRate * 100) + "% | Stats: +" + newStats + " STR/DEX/INT/LUK");
+                    }
+                }
+            }
+        } catch (java.sql.SQLException e) {
+            e.printStackTrace();
+        }
+
         chr.sendPacket(PacketCreator.showSpecialEffect(9)); // Quest completion
         chr.getMap().broadcastMessage(chr, PacketCreator.showForeignEffect(chr.getId(), 9), false); //use 9 instead of 12 for both
-        if (syncPartyBots) {
-            BotManager.getInstance().syncPartyBotsQuestComplete(chr, this, npc, null);
-        }
         return true;
     }
 
@@ -442,16 +468,6 @@ public class Quest {
             action.forceRun(chr, null);
         }
         forceStart(chr, npc, false);
-    }
-
-    public void forceCompleteWithActions(Character chr, int npc, Integer selection) {
-        forceComplete(chr, npc, false);
-        for (AbstractQuestAction action : completeActs.values()) {
-            action.forceRun(chr, selection);
-        }
-        if (!this.hasNextQuestAction()) {
-            chr.announceUpdateQuest(Character.DelayedQuestUpdate.INFO, chr.getQuest(this));
-        }
     }
 
     public short getId() {

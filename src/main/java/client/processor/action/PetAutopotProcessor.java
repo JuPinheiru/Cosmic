@@ -86,6 +86,27 @@ public class PetAutopotProcessor {
                 return;
             }
 
+            // Cooldown de 15 segundos para poções de HP e MP
+            StatEffect potCheck = ItemInformationProvider.getInstance().getItemEffect(itemId);
+            if (potCheck != null) {
+                long now = System.currentTimeMillis();
+                long cooldown = 15000L;
+                boolean isHpPot = potCheck.getHp() > 0 || potCheck.getHpRate() > 0.0;
+                boolean isMpPot = potCheck.getMp() > 0 || potCheck.getMpRate() > 0.0;
+                if (isHpPot && (now - chr.getLastHpPotionTime()) < cooldown) {
+                    chr.dropMessage(5, "HP potion cooldown: " + ((cooldown - (now - chr.getLastHpPotionTime())) / 1000 + 1) + "s");
+                    c.sendPacket(PacketCreator.enableActions());
+                    return;
+                }
+                if (isMpPot && (now - chr.getLastMpPotionTime()) < cooldown) {
+                    chr.dropMessage(5, "MP potion cooldown: " + ((cooldown - (now - chr.getLastMpPotionTime())) / 1000 + 1) + "s");
+                    c.sendPacket(PacketCreator.enableActions());
+                    return;
+                }
+                if (isHpPot) chr.setLastHpPotionTime(now);
+                if (isMpPot) chr.setLastMpPotionTime(now);
+            }
+
             int useCount = 0, qtyCount = 0;
             StatEffect stat = null;
 

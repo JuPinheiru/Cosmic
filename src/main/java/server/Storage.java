@@ -33,6 +33,7 @@ import provider.wz.WZFiles;
 import tools.DatabaseConnection;
 import tools.PacketCreator;
 import tools.Pair;
+import constants.inventory.ItemConstants;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -50,6 +51,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * @author Matze
  */
+
 public class Storage {
     private static final Logger log = LoggerFactory.getLogger(Storage.class);
     private static final Map<Integer, Integer> trunkGetCache = new HashMap<>();
@@ -62,11 +64,43 @@ public class Storage {
     private final Map<InventoryType, List<Item>> typeItems = new HashMap<>();
     private List<Item> items = new LinkedList<>();
     private final Lock lock = new ReentrantLock(true);
+    private boolean virtual = false;  // <- aqui
 
     private Storage(int id, byte slots, int meso) {
         this.id = id;
         this.slots = slots;
         this.meso = meso;
+    }
+
+    public boolean isVirtual() {  // <- aqui
+        return virtual;
+    }
+
+    public static Storage createVirtual(List<Item> collectionItems) {  // <- aqui
+        Storage ret = new Storage(-1, (byte) Math.max(24, collectionItems.size()), 0);
+        ret.virtual = true;
+        collectionItems.sort((a, b) -> {
+            int idA = a.getItemId();
+            int idB = b.getItemId();
+
+            int typeA = idA / 10000;  // tipo do equipamento
+            int typeB = idB / 10000;
+
+            if (typeA != typeB) {
+                return Integer.compare(typeA, typeB);
+            }
+
+            // mesmo tipo, ordena por classe (próximos 2 dígitos)
+            int classA = (idA / 100) % 100;
+            int classB = (idB / 100) % 100;
+
+            return Integer.compare(classA, classB);
+        });
+        ret.items.addAll(collectionItems);
+        for (InventoryType type : InventoryType.values()) {
+            ret.typeItems.put(type, new ArrayList<>(ret.items));
+        }
+        return ret;
     }
 
     private static Storage create(int id, int world) throws SQLException {

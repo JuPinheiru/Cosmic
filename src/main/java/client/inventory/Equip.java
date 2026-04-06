@@ -75,6 +75,7 @@ public class Equip extends Item {
     private int ringid = -1;
     private boolean wear = false;
     private boolean isUpgradeable, isElemental = false;    // timeless or reverse, or any equip that could levelup on GMS for all effects
+    private boolean jackpotTriggered = false;
 
     public Equip(int id, short position) {
         this(id, position, 0);
@@ -335,9 +336,19 @@ public class Equip extends Item {
     private void getUnitStatUpgrade(List<Pair<StatUpgrade, Integer>> stats, StatUpgrade name, int curStat, boolean isAttribute) {
         isUpgradeable = true;
 
-        int maxUpgrade = randomizeStatUpgrade((int) (1 + (curStat / (getStatModifier(isAttribute) * (isNotWeaponAffinity(name) ? 2.7 : 1)))));
-        if (maxUpgrade == 0) {
+        // 50% de chance de subir o stat
+        if (Math.random() < 0.5) {
             return;
+        }
+
+        // máximo de 30% do stat atual, mínimo 1
+        int maxUpgrade = Math.max(1, (int) (curStat * 0.30));
+        maxUpgrade = Randomizer.rand(1, maxUpgrade);
+
+        // 5% de chance de jackpot (5x o valor)
+        if (Math.random() < 0.05) {
+            maxUpgrade *= 5;
+            jackpotTriggered = true;
         }
 
         stats.add(new Pair<>(name, maxUpgrade));
@@ -373,18 +384,6 @@ public class Equip extends Item {
         }
         if (matk > 0) {
             getUnitStatUpgrade(stats, StatUpgrade.incMAD, matk, false);
-        }
-        if (wdef > 0) {
-            getUnitStatUpgrade(stats, StatUpgrade.incPDD, wdef, false);
-        }
-        if (mdef > 0) {
-            getUnitStatUpgrade(stats, StatUpgrade.incMDD, mdef, false);
-        }
-        if (avoid > 0) {
-            getUnitStatUpgrade(stats, StatUpgrade.incEVA, avoid, false);
-        }
-        if (acc > 0) {
-            getUnitStatUpgrade(stats, StatUpgrade.incACC, acc, false);
         }
         if (speed > 0) {
             getUnitStatUpgrade(stats, StatUpgrade.incSpeed, speed, false);
@@ -583,6 +582,7 @@ public class Equip extends Item {
         String lvupStr = "'" + ItemInformationProvider.getInstance().getName(this.getItemId()) + "' is now level " + itemLevel + "! ";
         String showStr = "#e'" + ItemInformationProvider.getInstance().getName(this.getItemId()) + "'#b is now #elevel #r" + itemLevel + "#k#b!";
 
+        jackpotTriggered = false;
         Pair<String, Pair<Boolean, Boolean>> res = this.gainStats(stats);
         lvupStr += res.getLeft();
         boolean gotSlot = res.getRight().getLeft();
@@ -595,6 +595,12 @@ public class Equip extends Item {
         if (gotSlot) {
             //c.getPlayer().dropMessage(6, "A new upgrade slot has been found on the '" + ItemInformationProvider.getInstance().getName(getItemId()) + "'!");
             lvupStr += "+UPGSLOT ";
+        }
+
+        if (jackpotTriggered) {
+            c.getPlayer().dropMessage(5, "JACKPOT! '" + ItemInformationProvider.getInstance().getName(this.getItemId()) + "' teve um upgrade lendário!");
+            c.getPlayer().getMap().broadcastPacket(c.getPlayer(), PacketCreator.showForeignEffect(c.getPlayer().getId(), 15));
+            jackpotTriggered = false;
         }
 
         c.getPlayer().equipChanged();
@@ -634,12 +640,12 @@ public class Equip extends Item {
             return;
         }
 
-        int equipMaxLevel = Math.min(30, Math.max(ii.getEquipLevel(this.getItemId(), true), YamlConfig.config.server.USE_EQUIPMNT_LVLUP));
+        int reqLevel = ii.getEquipLevelReq(this.getItemId());
+        int equipMaxLevel = Math.max(1, reqLevel / 5);
+
         if (itemLevel >= equipMaxLevel) {
             return;
         }
-
-        int reqLevel = ii.getEquipLevelReq(this.getItemId());
 
         float masteryModifier = (float) (YamlConfig.config.server.EQUIP_EXP_RATE * ExpTable.getExpNeededForLevel(1)) / (float) normalizedMasteryExp(reqLevel);
         float elementModifier = (isElemental) ? 0.85f : 0.6f;

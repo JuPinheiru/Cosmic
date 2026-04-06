@@ -182,4 +182,7 @@ public class BotEntry {
         this.owner = owner;
         this.task = task;
     }
+
+    public boolean restocking = false;
+    public int grindMapId = 0;
 }

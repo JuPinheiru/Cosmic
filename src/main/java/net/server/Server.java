@@ -54,6 +54,7 @@ import net.server.task.DueyFredrickTask;
 import net.server.task.EventRecallCoordinatorTask;
 import net.server.task.InvitationTask;
 import net.server.task.LoginCoordinatorTask;
+import server.bots.BotAutoSpawner;
 import net.server.task.LoginStorageTask;
 import net.server.task.RankingCommandTask;
 import net.server.task.RankingLoginTask;
@@ -941,6 +942,9 @@ public class Server {
 
         online = true;
         Duration initDuration = Duration.between(beforeInit, Instant.now());
+
+        // BotAutoSpawner.getInstance().scheduleAutoSpawn(); // - Inicia os bots autonomos.
+
         log.info("Cosmic is now online after {} ms.", initDuration.toMillis());
 
         DressingRoom.load();

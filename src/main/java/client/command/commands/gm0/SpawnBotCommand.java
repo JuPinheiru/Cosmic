@@ -1,4 +1,4 @@
-package client.command.commands.gm3;
+package client.command.commands.gm0;
 
 import client.BotClient;
 import client.Character;
@@ -139,7 +139,7 @@ public class SpawnBotCommand extends Command {
     private int createBotAccount(Connection con, String name) throws SQLException {
         String hashedPw = BCrypt.hashpw("botbot", BCrypt.gensalt(12));
         try (PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO accounts (name, password, birthday, tempban) VALUES (?, ?, ?, ?)",
+                "INSERT INTO accounts (name, password, birthday, tempban, is_bot) VALUES (?, ?, ?, ?, 1)",
                 Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, name);
             ps.setString(2, hashedPw);

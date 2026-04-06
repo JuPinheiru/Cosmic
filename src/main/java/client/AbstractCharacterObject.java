@@ -270,7 +270,7 @@ public abstract class AbstractCharacterObject extends AbstractAnimatedMapObject 
             this.transienthp = Float.NEGATIVE_INFINITY;
         }
         this.maxhp = hp_;
-        this.clientmaxhp = Math.min(300000, hp_);
+        this.clientmaxhp = Math.min(30000, hp_);
     }
 
     protected void setMaxMp(int mp_) {
@@ -279,7 +279,7 @@ public abstract class AbstractCharacterObject extends AbstractAnimatedMapObject 
         }
         this.maxmp = mp_;
 //        int clientMaxMP = mp_ >= 30000 ? mp_ / 1000 : mp_;
-        this.clientmaxmp = Math.min(300000, mp_);
+        this.clientmaxmp = Math.min(30000, mp_);
     }
 
     private static long clampStat(int v, int min, int max) {
@@ -576,19 +576,19 @@ public abstract class AbstractCharacterObject extends AbstractAnimatedMapObject 
         }
     }
 
-    private void setStr(int str) {
+    public void setStr(int str) {
         this.str = str;
     }
 
-    private void setDex(int dex) {
+    public void setDex(int dex) {
         this.dex = dex;
     }
 
-    private void setInt(int int_) {
+    public void setInt(int int_) {
         this.int_ = int_;
     }
 
-    private void setLuk(int luk) {
+    public void setLuk(int luk) {
         this.luk = luk;
     }
 

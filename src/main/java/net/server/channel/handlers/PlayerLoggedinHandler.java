@@ -31,6 +31,7 @@ import client.Family;
 import client.FamilyEntry;
 import client.Mount;
 import client.SkillFactory;
+import client.Stat;
 import client.inventory.Equip;
 import client.inventory.Inventory;
 import client.inventory.InventoryType;

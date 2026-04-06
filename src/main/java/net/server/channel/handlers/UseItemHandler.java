@@ -53,6 +53,26 @@ public final class UseItemHandler extends AbstractPacketHandler {
         int itemId = p.readInt();
         Item toUse = chr.getInventory(InventoryType.USE).getItem(slot);
         if (toUse != null && toUse.getQuantity() > 0 && toUse.getItemId() == itemId) {
+            // Cooldown de 15 segundos para poções de HP e MP
+            StatEffect potEffect = ii.getItemEffect(itemId);
+            long now = System.currentTimeMillis();
+            long cooldown = 15000L;
+            if (potEffect != null) {
+                boolean isHpPot = potEffect.getHp() > 0 || potEffect.getHpRate() > 0.0;
+                boolean isMpPot = potEffect.getMp() > 0 || potEffect.getMpRate() > 0.0;
+                if (isHpPot && (now - chr.getLastHpPotionTime()) < cooldown) {
+                    chr.dropMessage(5, "HP potion cooldown: " + ((cooldown - (now - chr.getLastHpPotionTime())) / 1000 + 1) + "s");
+                    c.sendPacket(PacketCreator.enableActions());
+                    return;
+                }
+                if (isMpPot && (now - chr.getLastMpPotionTime()) < cooldown) {
+                    chr.dropMessage(5, "MP potion cooldown: " + ((cooldown - (now - chr.getLastMpPotionTime())) / 1000 + 1) + "s");
+                    c.sendPacket(PacketCreator.enableActions());
+                    return;
+                }
+                if (isHpPot) chr.setLastHpPotionTime(now);
+                if (isMpPot) chr.setLastMpPotionTime(now);
+            }
             if (itemId == ItemId.ALL_CURE_POTION) {
                 chr.dispelDebuffs();
                 remove(c, slot);
@@ -95,4 +115,5 @@ public final class UseItemHandler extends AbstractPacketHandler {
         InventoryManipulator.removeFromSlot(c, InventoryType.USE, slot, (short) 1, false);
         c.sendPacket(PacketCreator.enableActions());
     }
+
 }
