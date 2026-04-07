@@ -80,6 +80,8 @@ public class BotEntry {
     // Damage taken
     long deadUntil = 0;
     int mobHitCooldownMs = 0;
+    Point lastMobTouchCheckPos = null;
+    int lastMobTouchMapId = -1;
 
     // Loot and potions
     int potCheckTimerMs = 0;
@@ -142,6 +144,8 @@ public class BotEntry {
     boolean buffConsumablesEnabled = false;
     boolean buffCheapMode          = true;
     long    lastBuffScanMs         = 0;
+    long    lastBuffActionAtMs     = 0L;
+    String  lastBuffActionSummary  = "no buff scans yet";
 
     // Party-quest state (one slot per PQ type; null = not in that PQ)
     public server.bots.pq.BotKpqState kpq = new server.bots.pq.BotKpqState();
@@ -168,6 +172,16 @@ public class BotEntry {
     BotPathLogger pathLogger = null;
     String lastNavDecision = "-";
     long pendingGearPromptAt = 0L;
+    // Last known owner position (set each tick in BotManager, read by pathLogger)
+    Point lastOwnerPos = null;
+    boolean lastTickWasAi = false;
+    long lastTickAtMs = 0L;
+
+    // Stuck detection & unstuck
+    int stuckMs = 0;
+    int unstuckCooldownMs = 0;
+    int stuckCheckX = Integer.MIN_VALUE;
+    int stuckCheckY = Integer.MIN_VALUE;
 
     // Movement packet cache so repeated no-op packets are suppressed
     boolean movementBroadcastValid = false;
