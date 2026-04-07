@@ -25,7 +25,9 @@ import server.StatEffect;
 import server.life.Element;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Skill {
     private final int id;
@@ -34,6 +36,9 @@ public class Skill {
     private int animationTime;
     private final int job;
     private boolean action;
+    private String action0;
+    private String action1;
+    private final Map<Integer, String> levelActions = new HashMap<>();
 
     public Skill(int id) {
         this.id = id;
@@ -94,7 +99,49 @@ public class Skill {
         return action;
     }
 
+    public void setAction0(String action) {
+        this.action0 = normalizeAction(action);
+    }
+
+    public void setAction1(String action) {
+        this.action1 = normalizeAction(action);
+    }
+
+    public void addLevelAction(int level, String action) {
+        String normalizedAction = normalizeAction(action);
+        if (level <= 0 || normalizedAction == null) {
+            return;
+        }
+        levelActions.put(level, normalizedAction);
+    }
+
+    public String resolveAnimationAction(int skillLevel, boolean twoHanded) {
+        if (!levelActions.isEmpty()) {
+            String levelAction = levelActions.get(skillLevel);
+            if (levelAction != null) {
+                return levelAction;
+            }
+        }
+
+        if (action0 == null) {
+            return null;
+        }
+
+        if (action1 != null) {
+            return twoHanded ? action1 : action0;
+        }
+
+        return action0;
+    }
+
     public void addLevelEffect(StatEffect effect) {
         effects.add(effect);
+    }
+
+    private static String normalizeAction(String action) {
+        if (action == null || action.isBlank()) {
+            return null;
+        }
+        return action;
     }
 }

@@ -4,9 +4,9 @@ import client.BuffStat;
 import client.Character;
 import client.Skill;
 import client.SkillFactory;
-import client.inventory.InventoryType;
-import client.inventory.Item;
 import client.inventory.WeaponType;
+import constants.game.GameConstants;
+import constants.skills.Archer;
 import constants.skills.Assassin;
 import constants.skills.Bandit;
 import constants.skills.Bowmaster;
@@ -19,14 +19,17 @@ import constants.skills.GM;
 import constants.skills.Marksman;
 import constants.skills.NightWalker;
 import constants.skills.Priest;
+import constants.skills.Rogue;
 import constants.skills.Spearman;
 import constants.skills.SuperGM;
 import constants.skills.ThunderBreaker;
+import constants.skills.WindArcher;
 import net.server.channel.handlers.AbstractDealDamageHandler;
-import net.server.channel.handlers.CloseRangeDamageHandler;
-import net.server.channel.handlers.MagicDamageHandler;
-import net.server.channel.handlers.RangedAttackHandler;
 import server.StatEffect;
+import server.bots.combat.BotAttackDataProvider;
+import server.combat.CombatFormulaProvider;
+import server.bots.combat.BotDefenseDataProvider;
+import server.bots.combat.BotMobHitboxProvider;
 import server.life.Monster;
 import server.maps.Foothold;
 import tools.PacketCreator;
@@ -36,12 +39,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 
 class BotCombatManager {
 
-    private enum AttackRoute {
+    enum AttackRoute {
         CLOSE,
         RANGED,
         MAGIC
@@ -105,14 +109,16 @@ class BotCombatManager {
         public int   ATTACK_DOWN_MAX = 20;
         public int   ATTACK_JUMP_Y   = 130;
         public int   ATTACK_JUMP_X_EXTRA = 60;
+        public int   RANGED_DEGENERATE_RANGE_X = 140;
+        public int   RANGED_DEGENERATE_RANGE_Y = 70;
+        public int   RANGED_RETREAT_DISTANCE_X = 120;
 
         // Grind / AoE
         public int   GRIND_SEEK_RANGE  = 800;
         public int   AOE_MOB_THRESHOLD = 2;
 
         // Mob damage
-        public int   MOB_TOUCH_HALF_W = 40;
-        public int   MOB_TOUCH_HALF_H = 30;
+        public int   MOB_TOUCH_SWEEP_HEIGHT = 50;
         public int   MOB_HIT_COOLDOWN_MS = 1500;
         public long  BOT_DEAD_MS      = 10_000L;
 
@@ -126,6 +132,18 @@ class BotCombatManager {
     }
 
     static Config cfg = new Config();
+    // Journey client CharStats::get_range() returns Rectangle(-projectilerange, -5, -50, 50).
+    private static final int CLIENT_PROJECTILE_BASE_RANGE = 400;
+    private static final int CLIENT_PROJECTILE_NEAR_INSET = 5;
+    private static final int CLIENT_PROJECTILE_TOP = 50;
+    private static final int CLIENT_PROJECTILE_BOTTOM = 50;
+    private static final List<Integer> PASSIVE_PROJECTILE_RANGE_SKILL_IDS = List.of(
+            Archer.EYE_OF_AMAZON,
+            4000001,
+            Rogue.KEEN_EYES,
+            WindArcher.EYE_OF_AMAZON,
+            NightWalker.KEEN_EYES
+    );
     private static final Set<Integer> PARTY_SUPPORT_SKILL_IDS = Set.of(
             Assassin.HASTE,
             Bandit.HASTE,
@@ -155,18 +173,23 @@ class BotCombatManager {
 
     /** Check every alive monster on the map; if bot is inside its bounding box, apply a hit. */
     static void tickMobDamage(BotEntry entry, Character bot) {
-        if (entry.mobHitCooldownMs > 0) {
-            entry.mobHitCooldownMs = BotMovementManager.tickDown(entry.mobHitCooldownMs);
-            return;
-        }
-        if (bot.getHp() <= 0) return;
-
-        for (Monster mob : bot.getMap().getAllMonsters()) {
-            if (!mob.isAlive()) continue;
-            if (isMobTouchingBot(bot, mob)) {
-                applyMobHit(entry, bot, mob);
+        Point botPos = bot.getPosition();
+        try {
+            if (entry.mobHitCooldownMs > 0) {
+                entry.mobHitCooldownMs = BotMovementManager.tickDown(entry.mobHitCooldownMs);
                 return;
             }
+            if (bot.getHp() <= 0) return;
+
+            for (Monster mob : bot.getMap().getAllMonsters()) {
+                if (!mob.isAlive()) continue;
+                if (isMobTouchingBot(entry, bot, mob)) {
+                    applyMobHit(entry, bot, mob);
+                    return;
+                }
+            }
+        } finally {
+            rememberMobTouchCheck(entry, bot, botPos);
         }
     }
 
@@ -280,14 +303,12 @@ class BotCombatManager {
         entry.buffSkillIds.clear();
 
         int bestAtkHits = 0;
+        int bestAtkPriority = Integer.MIN_VALUE;
+        int bestAtkDamage = Integer.MIN_VALUE;
         int bestAoeScore = 0;
 
         for (Skill skill : bot.getSkills().keySet()) {
             int lvl = bot.getSkillLevel(skill);
-            if (lvl <= 0) continue;
-            int maxLvl = bot.getMasterLevel(skill);
-            if (maxLvl > 0 && lvl > maxLvl) lvl = maxLvl;
-            if (lvl > skill.getMaxLevel()) lvl = skill.getMaxLevel();
             if (lvl <= 0) continue;
 
             StatEffect fx = skill.getEffect(lvl);
@@ -299,8 +320,7 @@ class BotCombatManager {
                 entry.healSkillId = skill.getId();
             }
 
-
-            if (atk > 0) {
+            if (fx.getMpCon() > 0) {  // mpCon > 0 identifies real attack/active skills; attackCount defaults to 1 for all skills
                 if (mobs >= 2) {
                     int score = mobs * atk;
                     if (score > bestAoeScore) {
@@ -308,8 +328,11 @@ class BotCombatManager {
                         entry.aoeSkillId = skill.getId();
                         entry.aoeSkillMobs = mobs;
                     }
-                } else if (atk > bestAtkHits) {
+                } else if (shouldUseAsBestSingleTargetSkill(bot, skill, fx, atk,
+                        bestAtkHits, bestAtkPriority, bestAtkDamage, entry.attackSkillId)) {
                     bestAtkHits = atk;
+                    bestAtkPriority = singleTargetSkillPriority(bot, skill);
+                    bestAtkDamage = fx.getDamage();
                     entry.attackSkillId = skill.getId();
                 }
                 continue;
@@ -349,6 +372,35 @@ class BotCombatManager {
         }
     }
 
+    private static boolean shouldUseAsBestSingleTargetSkill(Character bot, Skill skill, StatEffect effect,
+                                                            int attackCount, int bestAttackCount,
+                                                            int bestPriority, int bestDamage,
+                                                            int currentBestSkillId) {
+        int priority = singleTargetSkillPriority(bot, skill);
+        if (priority != bestPriority) {
+            return priority > bestPriority;
+        }
+
+        int damage = effect != null ? effect.getDamage() : 0;
+        int score = damage * attackCount;
+        int bestScore = bestDamage * bestAttackCount;
+        if (score != bestScore) {
+            return score > bestScore;
+        }
+
+        return currentBestSkillId == 0 || skill.getId() < currentBestSkillId;
+    }
+
+    private static int singleTargetSkillPriority(Character bot, Skill skill) {
+        if (skill == null) {
+            return Integer.MIN_VALUE;
+        }
+        if (skill.isBeginnerSkill()) {
+            return 0;
+        }
+        return GameConstants.isInJobTree(skill.getId(), bot.getJob().getId()) ? 2 : 1;
+    }
+
     static void tickSupportHealing(BotEntry entry, Character bot) {
         if (entry.attackCooldownMs > 0) return;
         if (!entry.supportHealsEnabled) return;
@@ -367,7 +419,13 @@ class BotCombatManager {
         fx.applyTo(bot);
 
         entry.nextSupportHealAt = now + cfg.SUPPORT_HEAL_CD_MS;
-        entry.attackCooldownMs = Math.max(entry.attackCooldownMs, toCooldownMs(resolveSkillAttackDelayMillis(skill)));
+        BotAttackExecutionProvider.BasicAttackData fallbackAttackData =
+                BotAttackExecutionProvider.buildBasicAttackData(bot, bot.getPosition());
+        String action = BotAttackExecutionProvider.resolveSkillAttackAction(bot, skill, lvl,
+                BotAttackExecutionProvider.getEquippedWeaponType(bot));
+        BotAttackExecutionProvider.SkillAttackTiming skillTiming =
+                BotAttackExecutionProvider.resolveSkillAttackTiming(skill, action, bot, fallbackAttackData);
+        entry.attackCooldownMs = Math.max(entry.attackCooldownMs, skillTiming.cooldownMs());
         if (fx.getCooldown() > 0) {
             bot.addCooldown(entry.healSkillId, now, fx.getCooldown() * 1000L);
         }
@@ -408,10 +466,10 @@ class BotCombatManager {
                 return skillAttack;
             }
 
-            BasicAttackData basicAttackData = buildBasicAttackData(bot, target);
-            return new AttackPlan(0, 0, 1, basicAttackData.hitBox, List.of(target), determineBasicAttackRoute(bot),
-                    basicAttackData.display, basicAttackData.direction, basicAttackData.rangedDirection, basicAttackData.stance,
-                    basicAttackData.speed, basicAttackData.hitDelayMs, basicAttackData.cooldownMs);
+            BotAttackExecutionProvider.BasicAttackData basicAttackData = buildBasicAttackData(bot, target);
+            return new AttackPlan(0, 0, 1, basicAttackData.hitBox(), List.of(target), basicAttackData.route(),
+                    basicAttackData.display(), basicAttackData.direction(), basicAttackData.rangedDirection(), basicAttackData.stance(),
+                    basicAttackData.speed(), basicAttackData.hitDelayMs(), basicAttackData.cooldownMs());
         } finally {
             BotPerformanceMonitor.record("combat-plan", System.nanoTime() - startedAt);
         }
@@ -443,11 +501,6 @@ class BotCombatManager {
             return;
         }
 
-        int watk = bot.getTotalWatk();
-        int maxDmg = Math.max(1, bot.calculateMaxBaseDamage(watk));
-        int minDmg = Math.max(1, bot.calculateMinBaseDamage(watk));
-
-        Monster primaryTarget = attackPlan.primaryTarget();
         int numAttacked = attackPlan.targets.size();
         AbstractDealDamageHandler.AttackInfo attack = new AbstractDealDamageHandler.AttackInfo();
         attack.skill = attackPlan.skillId;
@@ -456,22 +509,24 @@ class BotCombatManager {
         attack.numAttacked = numAttacked;
         attack.numAttackedAndDamage = (numAttacked << 4) | attackPlan.numDamage;
         attack.speed = attackPlan.speed;
-        attack.stance = attackPlan.stance;
+        attack.stance = attackPlan.stance; // Historical server name: packet byte 3.
         attack.display = attackPlan.display;
-        attack.direction = attackPlan.direction;
-        attack.rangedirection = attackPlan.rangedDirection;
+        attack.direction = attackPlan.direction; // Historical server name: packet byte 2.
+        attack.rangedirection = attackPlan.rangedDirection; // Extra ranged byte after speed.
         attack.ranged = attackPlan.route == AttackRoute.RANGED;
-        attack.magic = attackPlan.route == AttackRoute.MAGIC;
+        CombatFormulaProvider.DamageProfile damageProfile = CombatFormulaProvider.getInstance().resolveDamageProfile(
+                bot, attackPlan.skillId, attackPlan.skillLevel,
+                attackPlan.route == AttackRoute.MAGIC);
+        attack.magic = damageProfile.magicAttack();
         attack.targets = new HashMap<>();
 
-        boolean isMagic = attackPlan.route == AttackRoute.MAGIC;
         for (Monster target : attackPlan.targets) {
-            int[] adj = applyMonsterDefense(bot, target, minDmg, maxDmg, isMagic);
             attack.targets.put(target.getObjectId(),
-                    makeTarget(bot, target, attackPlan.numDamage, adj[0], adj[1], attackPlan.hitDelayMs, isMagic));
+                    CombatFormulaProvider.getInstance().makeTarget(bot, target, attackPlan.numDamage,
+                            damageProfile, attackPlan.hitDelayMs));
         }
 
-        applyAttackRoute(attackPlan.route, attack, bot);
+        BotAttackExecutionProvider.applyAttackRoute(attackPlan.route, attack, bot);
         entry.attackCooldownMs = Math.max(entry.attackCooldownMs, attackPlan.cooldownMs);
     }
 
@@ -494,7 +549,8 @@ class BotCombatManager {
         }
 
         StatEffect effect = skill.getEffect(skillLevel);
-        Rectangle hitBox = calculateSkillHitBox(effect, bot, primaryTarget);
+        AttackRoute route = BotAttackExecutionProvider.determineSkillRoute(bot, entry.aoeSkillId);
+        Rectangle hitBox = calculateSkillHitBox(effect, bot, primaryTarget, route);
         if (hitBox == null) {
             return null;
         }
@@ -505,21 +561,28 @@ class BotCombatManager {
         }
 
         int attackCount = Math.max(1, effect.getAttackCount());
-        AttackRoute route = determineSkillRoute(bot, entry.aoeSkillId);
+        WeaponType weaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        if (!BotAttackExecutionProvider.canUseRangedAttackRoute(route, weaponType, bot.getPosition(), primaryTarget.getPosition())) {
+            return null;
+        }
         boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
-        BasicAttackData fallbackAttackData = buildBasicAttackData(bot, primaryTarget);
-        CloseRangePacketFields closeRangePacketFields = route == AttackRoute.CLOSE
-                ? mimicCloseRangePacketFields(sampleCloseRangeAttackAction(bot, getEquippedWeaponType(bot)),
-                basicAttackSpec(getEquippedWeaponType(bot)).primaryAction(), 6, facingLeft)
+        BotAttackExecutionProvider.BasicAttackData fallbackAttackData = buildBasicAttackData(bot, primaryTarget);
+        BotAttackDataProvider.AttackAnimationSpec attackSpec = BotAttackDataProvider.getInstance().getBasicAttackSpec(weaponType);
+        String action = BotAttackExecutionProvider.resolveSkillAttackAction(bot, skill, skillLevel, weaponType);
+        String fallbackAction = attackSpec.primaryAction();
+        BotAttackExecutionProvider.CloseRangePacketFields closeRangePacketFields = route == AttackRoute.CLOSE
+                ? BotAttackExecutionProvider.mimicCloseRangePacketFields(action, fallbackAction, facingLeft)
                 : null;
         int direction = route == AttackRoute.CLOSE
-                ? closeRangePacketFields.direction()
-                : (facingLeft ? 17 : 6);
-        SkillAttackTiming skillTiming = resolveSkillAttackTiming(skill, route, bot, fallbackAttackData);
+                ? closeRangePacketFields.bodyActionId()
+                : BotAttackExecutionProvider.bodyActionId(action, fallbackAction);
+        BotAttackExecutionProvider.SkillAttackTiming skillTiming =
+                BotAttackExecutionProvider.resolveSkillAttackTiming(skill, action, bot, fallbackAttackData);
         return new AttackPlan(entry.aoeSkillId, skillLevel, attackCount, hitBox, targets,
                 route, route == AttackRoute.CLOSE ? closeRangePacketFields.display() : 0,
-                direction, direction, route == AttackRoute.CLOSE ? closeRangePacketFields.stance() : 0,
-                resolveWeaponAttackSpeed(bot), skillTiming.hitDelayMs(), skillTiming.cooldownMs());
+                direction, direction,
+                route == AttackRoute.CLOSE ? closeRangePacketFields.facingMask() : facingLeft ? -128 : 0,
+                fallbackAttackData.speed(), skillTiming.hitDelayMs(), skillTiming.cooldownMs());
     }
 
     private static AttackPlan planSingleTargetSkill(BotEntry entry, Character bot, Monster primaryTarget) {
@@ -534,40 +597,49 @@ class BotCombatManager {
         }
 
         StatEffect effect = skill.getEffect(skillLevel);
-        Rectangle hitBox = calculateSkillHitBox(effect, bot, primaryTarget);
+        AttackRoute route = BotAttackExecutionProvider.determineSkillRoute(bot, entry.attackSkillId);
+        Rectangle hitBox = calculateSkillHitBox(effect, bot, primaryTarget, route);
         if (hitBox == null || !doesHitBoxIntersectMonster(hitBox, primaryTarget)) {
             return null;
         }
 
         int attackCount = Math.max(1, effect.getAttackCount());
-        AttackRoute route = determineSkillRoute(bot, entry.attackSkillId);
+        WeaponType weaponType = BotAttackExecutionProvider.getEquippedWeaponType(bot);
+        if (!BotAttackExecutionProvider.canUseRangedAttackRoute(route, weaponType, bot.getPosition(), primaryTarget.getPosition())) {
+            return null;
+        }
         boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
-        BasicAttackData fallbackAttackData = buildBasicAttackData(bot, primaryTarget);
-        CloseRangePacketFields closeRangePacketFields = route == AttackRoute.CLOSE
-                ? mimicCloseRangePacketFields(sampleCloseRangeAttackAction(bot, getEquippedWeaponType(bot)),
-                basicAttackSpec(getEquippedWeaponType(bot)).primaryAction(), 6, facingLeft)
+        BotAttackExecutionProvider.BasicAttackData fallbackAttackData = buildBasicAttackData(bot, primaryTarget);
+        BotAttackDataProvider.AttackAnimationSpec attackSpec = BotAttackDataProvider.getInstance().getBasicAttackSpec(weaponType);
+        String action = BotAttackExecutionProvider.resolveSkillAttackAction(bot, skill, skillLevel, weaponType);
+        String fallbackAction = attackSpec.primaryAction();
+        BotAttackExecutionProvider.CloseRangePacketFields closeRangePacketFields = route == AttackRoute.CLOSE
+                ? BotAttackExecutionProvider.mimicCloseRangePacketFields(action, fallbackAction, facingLeft)
                 : null;
         int direction = route == AttackRoute.CLOSE
-                ? closeRangePacketFields.direction()
-                : (facingLeft ? 17 : 6);
-        SkillAttackTiming skillTiming = resolveSkillAttackTiming(skill, route, bot, fallbackAttackData);
+                ? closeRangePacketFields.bodyActionId()
+                : BotAttackExecutionProvider.bodyActionId(action, fallbackAction, weaponType);
+        BotAttackExecutionProvider.SkillAttackTiming skillTiming =
+                BotAttackExecutionProvider.resolveSkillAttackTiming(skill, action, bot, fallbackAttackData);
         return new AttackPlan(entry.attackSkillId, skillLevel, attackCount, hitBox, List.of(primaryTarget),
                 route, route == AttackRoute.CLOSE ? closeRangePacketFields.display() : 0,
-                direction, direction, route == AttackRoute.CLOSE ? closeRangePacketFields.stance() : 0,
-                resolveWeaponAttackSpeed(bot), skillTiming.hitDelayMs(), skillTiming.cooldownMs());
+                direction, direction,
+                route == AttackRoute.CLOSE ? closeRangePacketFields.facingMask() : facingLeft ? -128 : 0,
+                fallbackAttackData.speed(), skillTiming.hitDelayMs(), skillTiming.cooldownMs());
     }
 
-    private static Rectangle calculateSkillHitBox(StatEffect effect, Character bot, Monster primaryTarget) {
+    private static Rectangle calculateSkillHitBox(StatEffect effect, Character bot, Monster primaryTarget, AttackRoute route) {
         boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
         if (effect.hasBoundingBox()) {
             return effect.calculateBoundingBox(bot.getPosition(), facingLeft);
         }
 
-        return fallbackCloseRangeSkillHitBox(effect, bot, facingLeft);
+        return fallbackSkillHitBox(effect, bot, facingLeft, route);
     }
 
     static Rectangle fallbackCloseRangeSkillHitBox(StatEffect effect, Character bot, boolean facingLeft) {
-        if (effect == null || bot == null || determineWeaponRoute(getEquippedWeaponType(bot)) != AttackRoute.CLOSE) {
+        if (effect == null || bot == null
+                || BotAttackExecutionProvider.determineBasicAttackRoute(bot) != AttackRoute.CLOSE) {
             return null;
         }
 
@@ -577,6 +649,70 @@ class BotCombatManager {
         int height = cfg.ATTACK_RANGE_Y + cfg.ATTACK_DOWN_MAX;
         int left = facingLeft ? origin.x - horizontalRange : origin.x;
         return new Rectangle(left, top, horizontalRange, height);
+    }
+
+    static Rectangle fallbackSkillHitBox(StatEffect effect, Character bot, boolean facingLeft, AttackRoute route) {
+        if (route == AttackRoute.CLOSE) {
+            return fallbackCloseRangeSkillHitBox(effect, bot, facingLeft);
+        }
+        if (effect == null || bot == null) {
+            return null;
+        }
+
+        return clientProjectileHitBox(bot, facingLeft, projectileRangeScale(effect));
+    }
+
+    static Rectangle clientProjectileHitBox(Character bot, boolean facingLeft, float horizontalScale) {
+        if (bot == null || bot.getPosition() == null) {
+            return null;
+        }
+
+        Point origin = bot.getPosition();
+        int projectileRange = CLIENT_PROJECTILE_BASE_RANGE + passiveProjectileRangeBonus(bot);
+        int farEdge = Math.max(CLIENT_PROJECTILE_NEAR_INSET, Math.round(projectileRange * Math.max(0f, horizontalScale)));
+        int left = facingLeft ? origin.x - farEdge : origin.x + CLIENT_PROJECTILE_NEAR_INSET;
+        int right = facingLeft ? origin.x - CLIENT_PROJECTILE_NEAR_INSET : origin.x + farEdge;
+        return new Rectangle(left, origin.y - CLIENT_PROJECTILE_TOP, right - left,
+                CLIENT_PROJECTILE_TOP + CLIENT_PROJECTILE_BOTTOM);
+    }
+
+    static float projectileRangeScale(StatEffect effect) {
+        return effect != null && effect.getRange() > 0 ? effect.getRange() / 100.0f : 1.0f;
+    }
+
+    static int passiveProjectileRangeBonus(Character bot) {
+        if (bot == null) {
+            return 0;
+        }
+
+        int bonus = 0;
+        for (int skillId : PASSIVE_PROJECTILE_RANGE_SKILL_IDS) {
+            Skill skill = resolveLearnedSkill(bot, skillId);
+            if (skill == null) {
+                continue;
+            }
+
+            int level = bot.getSkillLevel(skill);
+            if (level <= 0) {
+                continue;
+            }
+
+            bonus += Math.max(0, skill.getEffect(level).getRange());
+        }
+        return bonus;
+    }
+
+    private static Skill resolveLearnedSkill(Character bot, int skillId) {
+        Map<Skill, Character.SkillEntry> skills = bot.getSkills();
+        if (skills != null) {
+            for (Skill learned : skills.keySet()) {
+                if (learned != null && learned.getId() == skillId) {
+                    return learned;
+                }
+            }
+        }
+
+        return SkillFactory.getSkill(skillId);
     }
 
     private static List<Monster> collectTargetsInHitBox(Character bot, Monster primaryTarget, Rectangle hitBox, int maxTargets) {
@@ -657,30 +793,44 @@ class BotCombatManager {
         return BotPhysicsEngine.findGroundFoothold(bot.getMap(), position);
     }
 
-    private static boolean isMobTouchingBot(Character bot, Monster mob) {
-        Rectangle botBounds = getBotTouchBounds(bot);
+    static boolean isMobTouchingBot(BotEntry entry, Character bot, Monster mob) {
+        Rectangle botBounds = getBotTouchBounds(entry, bot);
         Rectangle mobBounds = BotMobHitboxProvider.getInstance().getMobBounds(mob);
-        if (mobBounds != null) {
-            return mobBounds.intersects(botBounds);
+        if (mobBounds == null) {
+            return false;
         }
-
-        Point botPos = bot.getPosition();
-        Point mobPos = mob.getPosition();
-        Config cc = BotCombatManager.cfg;
-        return Math.abs(botPos.x - mobPos.x) <= cc.MOB_TOUCH_HALF_W
-                && Math.abs(botPos.y - mobPos.y) <= cc.MOB_TOUCH_HALF_H;
+        return mobBounds.intersects(botBounds);
     }
 
-    private static Rectangle getBotTouchBounds(Character bot) {
-        Rectangle bounds = BotCharacterHitboxProvider.getInstance().getBotBounds(bot);
-        if (bounds != null) {
-            return bounds;
+    static Rectangle getBotTouchBounds(BotEntry entry, Character bot) {
+        Point currentPos = bot.getPosition();
+        Point previousPos = currentPos;
+        if (entry != null
+                && entry.lastMobTouchCheckPos != null
+                && entry.lastMobTouchMapId == bot.getMapId()) {
+            previousPos = entry.lastMobTouchCheckPos;
         }
 
-        Point botPos = bot.getPosition();
-        int halfWidth = BotCombatManager.cfg.MOB_TOUCH_HALF_W;
-        int halfHeight = BotCombatManager.cfg.MOB_TOUCH_HALF_H;
-        return new Rectangle(botPos.x - halfWidth, botPos.y - halfHeight, halfWidth * 2, halfHeight * 2);
+        // Mirror the client touch check: sweep the player's foot position between ticks
+        // and use a fixed height above the feet instead of the full character sprite.
+        int left = Math.min(previousPos.x, currentPos.x);
+        int right = Math.max(previousPos.x, currentPos.x);
+        int top = Math.min(previousPos.y, currentPos.y) - BotCombatManager.cfg.MOB_TOUCH_SWEEP_HEIGHT;
+        int bottom = Math.max(previousPos.y, currentPos.y);
+        return inclusiveRectangle(left, top, right, bottom);
+    }
+
+    private static Rectangle inclusiveRectangle(int left, int top, int right, int bottom) {
+        return new Rectangle(left, top, Math.max(1, right - left + 1), Math.max(1, bottom - top + 1));
+    }
+
+    private static void rememberMobTouchCheck(BotEntry entry, Character bot, Point position) {
+        if (entry == null || bot == null || position == null) {
+            return;
+        }
+
+        entry.lastMobTouchCheckPos = new Point(position);
+        entry.lastMobTouchMapId = bot.getMapId();
     }
 
     private static boolean doesHitBoxIntersectMonster(Rectangle hitBox, Monster monster) {
@@ -696,427 +846,8 @@ class BotCombatManager {
         return hitBox.contains(monster.getPosition());
     }
 
-    private static BasicAttackData buildBasicAttackData(Character bot, Monster primaryTarget) {
-        Item weapon = bot.getInventory(InventoryType.EQUIPPED).getItem((short) -11);
-        if (weapon == null) {
-            return BasicAttackData.fallback(primaryTarget.getPosition().x < bot.getPosition().x);
-        }
-
-        BotAttackDataProvider.NormalAttackProfile attackProfile =
-                BotAttackDataProvider.getInstance().getNormalAttackProfile(weapon.getItemId());
-        if (attackProfile == null) {
-            return BasicAttackData.fallback(primaryTarget.getPosition().x < bot.getPosition().x);
-        }
-
-        WeaponType weaponType = server.ItemInformationProvider.getInstance().getWeaponType(weapon.getItemId());
-        boolean facingLeft = primaryTarget.getPosition().x < bot.getPosition().x;
-        Rectangle hitBox = attackProfile.hasBoundingBox()
-                ? attackProfile.calculateBoundingBox(bot.getPosition(), facingLeft)
-                : null;
-        return BasicAttackData.fromProfile(attackProfile, weaponType, hitBox, facingLeft, bot);
-    }
-
-    static record BasicAttackSpec(int display, List<String> actions) {
-        String primaryAction() {
-            return actions.isEmpty() ? "swingO1" : actions.get(0);
-        }
-
-        String actionForVariant(int variantOffset) {
-            if (actions.isEmpty()) {
-                return "swingO1";
-            }
-            int normalizedIndex = Math.max(0, Math.min(variantOffset, actions.size() - 1));
-            return actions.get(normalizedIndex);
-        }
-
-        int stanceIdForVariant(int variantOffset) {
-            return attackStanceId(actionForVariant(variantOffset));
-        }
-    }
-
-    /**
-     * Maps weapon types to the same attack display groups and action pools used by
-     * OpenStory's {@code CharLook::getattackstance} regular-attack selection.
-     */
-    static BasicAttackSpec basicAttackSpec(WeaponType weaponType) {
-        if (weaponType == null) {
-            return new BasicAttackSpec(1, List.of("stabO1", "stabO2", "swingO1", "swingO2", "swingO3"));
-        }
-        return switch (weaponType) {
-            case BOW -> new BasicAttackSpec(3, List.of("shoot1"));
-            case CROSSBOW -> new BasicAttackSpec(4, List.of("shoot2"));
-            case SPEAR_SWING, SPEAR_STAB, POLE_ARM_SWING, POLE_ARM_STAB ->
-                    new BasicAttackSpec(2, List.of("stabT1", "swingP1"));
-            case GENERAL2H_SWING, GENERAL2H_STAB, SWORD2H ->
-                    new BasicAttackSpec(5, List.of("stabO1", "stabO2", "swingT1", "swingT2", "swingT3"));
-            case WAND, STAFF -> new BasicAttackSpec(6, List.of("swingO1", "swingO2"));
-            case CLAW -> new BasicAttackSpec(7, List.of("swingO1", "swingO2"));
-            case GUN -> new BasicAttackSpec(9, List.of("shot"));
-            default -> new BasicAttackSpec(1, List.of("stabO1", "stabO2", "swingO1", "swingO2", "swingO3"));
-        };
-    }
-
-    static int attackStanceId(String actionName) {
-        return switch (actionName) {
-            case "shot" -> 10;
-            case "shoot1" -> 11;
-            case "shoot2" -> 12;
-            case "stabO1" -> 15;
-            case "stabO2" -> 16;
-            case "stabT1" -> 18;
-            case "stabT2" -> 19;
-            case "swingO1" -> 23;
-            case "swingO2" -> 24;
-            case "swingO3" -> 25;
-            case "swingP1" -> 27;
-            case "swingP2" -> 28;
-            case "swingT1" -> 30;
-            case "swingT2" -> 31;
-            case "swingT3" -> 32;
-            default -> 0;
-        };
-    }
-
-    static int basicAttackDirectionId(String actionName, String fallbackAction, int legacyFallbackDirection) {
-        if (isProneBasicAttackAction(actionName)) {
-            return legacyFallbackDirection;
-        }
-
-        BotAttackDataProvider provider = BotAttackDataProvider.getInstance();
-        int actionId = provider.getBodyActionId(actionName);
-        if (actionId >= 0) {
-            return actionId;
-        }
-
-        if (fallbackAction != null && !fallbackAction.equals(actionName) && !isProneBasicAttackAction(fallbackAction)) {
-            int fallbackActionId = provider.getBodyActionId(fallbackAction);
-            if (fallbackActionId >= 0) {
-                return fallbackActionId;
-            }
-        }
-
-        return legacyFallbackDirection;
-    }
-
-    // Captured close-range recv packets on this client use display=0, encode the
-    // body action id in the direction byte, and use stance as a facing flag:
-    // 0x00 facing right, 0x80 facing left.
-    static CloseRangePacketFields mimicCloseRangePacketFields(String actionName, String fallbackAction,
-                                                              int legacyFallbackDirection, boolean facingLeft) {
-        return new CloseRangePacketFields(0,
-                basicAttackDirectionId(actionName, fallbackAction, legacyFallbackDirection),
-                facingLeft ? 0x80 : 0x00);
-    }
-
-    private static boolean isProneBasicAttackAction(String actionName) {
-        return actionName != null && actionName.startsWith("prone");
-    }
-
-    private static String sampleCloseRangeAttackAction(Character bot, WeaponType weaponType) {
-        BasicAttackSpec attackSpec = basicAttackSpec(weaponType);
-        String fallbackAction = attackSpec.primaryAction();
-        String action = fallbackAction;
-
-        Item weapon = bot != null ? bot.getInventory(InventoryType.EQUIPPED).getItem((short) -11) : null;
-        if (weapon != null) {
-            BotAttackDataProvider.NormalAttackProfile attackProfile =
-                    BotAttackDataProvider.getInstance().getNormalAttackProfile(weapon.getItemId());
-            if (attackProfile != null) {
-                int variantCount = Math.max(1, BasicAttackData.countMoveVariants(attackProfile.getSourceActions()));
-                int variantOffset = ThreadLocalRandom.current().nextInt(variantCount);
-                action = attackProfile.getActionForVariant(variantOffset, fallbackAction);
-            } else if (!attackSpec.actions().isEmpty()) {
-                int variantOffset = ThreadLocalRandom.current().nextInt(attackSpec.actions().size());
-                action = attackSpec.actionForVariant(variantOffset);
-            }
-        } else if (!attackSpec.actions().isEmpty()) {
-            int variantOffset = ThreadLocalRandom.current().nextInt(attackSpec.actions().size());
-            action = attackSpec.actionForVariant(variantOffset);
-        }
-
-        return action;
-    }
-
-    private static void applyAttackRoute(AttackRoute route, AbstractDealDamageHandler.AttackInfo attack, Character bot) {
-        switch (route) {
-            case RANGED -> RangedAttackHandler.applyRangedAttackEffects(attack, bot, bot.getClient());
-            case MAGIC -> MagicDamageHandler.applyMagicAttackEffects(attack, bot, bot.getClient());
-            default -> CloseRangeDamageHandler.applyCloseRangeEffects(attack, bot, bot.getClient());
-        }
-    }
-
-    private static AttackRoute determineBasicAttackRoute(Character bot) {
-        return determineWeaponRoute(getEquippedWeaponType(bot));
-    }
-
-    private static AttackRoute determineSkillRoute(Character bot, int skillId) {
-        if (isRangedSkill(skillId)) {
-            return AttackRoute.RANGED;
-        }
-
-        WeaponType weaponType = getEquippedWeaponType(bot);
-        if (weaponType == WeaponType.WAND || weaponType == WeaponType.STAFF) {
-            return AttackRoute.MAGIC;
-        }
-
-        return determineWeaponRoute(weaponType);
-    }
-
-    private static AttackRoute determineWeaponRoute(WeaponType weaponType) {
-        if (weaponType == null) {
-            return AttackRoute.CLOSE;
-        }
-
-        return switch (weaponType) {
-            case BOW, CROSSBOW, CLAW, GUN -> AttackRoute.RANGED;
-            case WAND, STAFF -> AttackRoute.MAGIC;
-            default -> AttackRoute.CLOSE;
-        };
-    }
-
-    private static WeaponType getEquippedWeaponType(Character bot) {
-        Item weapon = bot.getInventory(InventoryType.EQUIPPED).getItem((short) -11);
-        if (weapon == null) {
-            return null;
-        }
-
-        return server.ItemInformationProvider.getInstance().getWeaponType(weapon.getItemId());
-    }
-
-    private static boolean isRangedSkill(int skillId) {
-        return switch (skillId) {
-            case constants.skills.Buccaneer.ENERGY_ORB,
-                 constants.skills.ThunderBreaker.SPARK,
-                 constants.skills.ThunderBreaker.SHARK_WAVE,
-                 constants.skills.Shadower.TAUNT,
-                 constants.skills.NightLord.TAUNT,
-                 constants.skills.Aran.COMBO_SMASH,
-                 constants.skills.Aran.COMBO_FENRIR,
-                 constants.skills.Aran.COMBO_TEMPEST -> true;
-            default -> false;
-        };
-    }
-
-    private record BasicAttackData(Rectangle hitBox, int display, int direction, int rangedDirection,
-                                   int stance, int speed, int hitDelayMs, int cooldownMs) {
-        private static BasicAttackData fromProfile(BotAttackDataProvider.NormalAttackProfile profile, WeaponType weaponType, Rectangle hitBox, boolean facingLeft, Character bot) {
-            int baseDisplay = profile.getAttack();
-            BasicAttackSpec fallbackSpec = basicAttackSpec(weaponType);
-            if (baseDisplay <= 0) {
-                return fallback(facingLeft, hitBox, profile.getAttackSpeed(), weaponType, bot);
-            }
-
-            int variantCount = Math.max(1, countMoveVariants(profile.getSourceActions()));
-            int variantOffset = ThreadLocalRandom.current().nextInt(variantCount);
-            String fallbackAction = fallbackSpec.primaryAction();
-            String action = profile.getActionForVariant(variantOffset, fallbackAction);
-            boolean closeRangeRoute = determineWeaponRoute(weaponType) == AttackRoute.CLOSE;
-            CloseRangePacketFields closeRangePacketFields = mimicCloseRangePacketFields(action, fallbackAction, 6, facingLeft);
-            int display = closeRangeRoute ? closeRangePacketFields.display() : baseDisplay + variantOffset;
-            int direction = closeRangeRoute
-                    ? closeRangePacketFields.direction()
-                    : basicAttackDirectionId(action, fallbackAction, facingLeft ? display + 11 : display);
-            int effectiveAttackSpeed = resolveEffectiveAttackSpeed(profile.getAttackSpeed(), bot);
-            BotAttackDataProvider provider = BotAttackDataProvider.getInstance();
-
-            // OpenStory gates new attacks on the body animation ending, while hit effects land
-            // when the afterimage first becomes active for the selected action.
-            int rawAnimationDelayMs = provider.getBodyStanceDurationMs(action);
-            if (rawAnimationDelayMs <= 0) {
-                rawAnimationDelayMs = profile.getAttackDelayMillis();
-            }
-            int rawHitDelayMs = provider.getBodyStanceDelayBeforeFrameMs(action, profile.getAfterimageFirstFrame(action));
-
-            int cooldownMs = toCooldownMs(adjustAttackDelayMillis(rawAnimationDelayMs, profile.getAttackSpeed(), effectiveAttackSpeed));
-            int hitDelayMs = adjustAttackDelayMillis(rawHitDelayMs, profile.getAttackSpeed(), effectiveAttackSpeed);
-            int stance = closeRangeRoute ? closeRangePacketFields.stance() : attackStanceId(action);
-
-            return new BasicAttackData(hitBox, display, direction, direction, stance, effectiveAttackSpeed, hitDelayMs, cooldownMs);
-        }
-
-        private static BasicAttackData fallback(boolean facingLeft) {
-            return fallback(facingLeft, null, 4, null, null);
-        }
-
-        private static BasicAttackData fallback(boolean facingLeft, Rectangle hitBox, int baseAttackSpeed,
-                                                WeaponType weaponType, Character bot) {
-            BasicAttackSpec attackSpec = basicAttackSpec(weaponType);
-            int variantOffset = ThreadLocalRandom.current().nextInt(attackSpec.actions().size());
-            String action = attackSpec.actionForVariant(variantOffset);
-            boolean closeRangeRoute = determineWeaponRoute(weaponType) == AttackRoute.CLOSE;
-            CloseRangePacketFields closeRangePacketFields =
-                    mimicCloseRangePacketFields(action, attackSpec.primaryAction(), 6, facingLeft);
-            int display = closeRangeRoute ? closeRangePacketFields.display() : attackSpec.display() + variantOffset;
-            int direction = closeRangeRoute
-                    ? closeRangePacketFields.direction()
-                    : basicAttackDirectionId(action, attackSpec.primaryAction(), facingLeft ? display + 11 : display);
-            int effectiveAttackSpeed = resolveEffectiveAttackSpeed(baseAttackSpeed, bot);
-            int rawAnimationDelayMs = BotAttackDataProvider.getInstance().getBodyStanceDurationMs(action);
-            if (rawAnimationDelayMs <= 0) {
-                rawAnimationDelayMs = 600;
-            }
-            int adjustedAnimationDelayMs = adjustAttackDelayMillis(rawAnimationDelayMs, baseAttackSpeed, effectiveAttackSpeed);
-
-            return new BasicAttackData(hitBox, display, direction, direction,
-                    closeRangeRoute ? closeRangePacketFields.stance() : attackSpec.stanceIdForVariant(variantOffset),
-                    effectiveAttackSpeed, defaultHitDelayMs(adjustedAnimationDelayMs), toCooldownMs(adjustedAnimationDelayMs));
-        }
-
-        private static int countMoveVariants(List<String> sourceActions) {
-            if (sourceActions == null || sourceActions.isEmpty()) {
-                return 1;
-            }
-
-            int variantCount = 0;
-            for (String sourceAction : sourceActions) {
-                if (sourceAction == null || sourceAction.isBlank()) {
-                    continue;
-                }
-                variantCount++;
-            }
-            return Math.max(1, variantCount);
-        }
-    }
-
-    record CloseRangePacketFields(int display, int direction, int stance) {
-    }
-
-    record SkillAttackTiming(int hitDelayMs, int cooldownMs) {
-    }
-
-    private static int resolveSkillAttackDelayMillis(Skill skill) {
-        if (skill == null) {
-            return 0;
-        }
-        return Math.max(0, skill.getAnimationTime());
-    }
-
-    static SkillAttackTiming resolveSkillAttackTiming(Skill skill, AttackRoute route, Character bot,
-                                                      BasicAttackData fallbackAttackData) {
-        int fallbackHitDelayMs = fallbackAttackData != null ? fallbackAttackData.hitDelayMs : defaultHitDelayMs(600);
-        int fallbackCooldownMs = fallbackAttackData != null ? fallbackAttackData.cooldownMs : toCooldownMs(600);
-        int rawSkillDelayMs = resolveSkillAttackDelayMillis(skill);
-        if (rawSkillDelayMs <= 0) {
-            return new SkillAttackTiming(fallbackHitDelayMs, fallbackCooldownMs);
-        }
-
-        return resolveSkillAttackTiming(rawSkillDelayMs,
-                route == AttackRoute.CLOSE || route == AttackRoute.RANGED,
-                resolveBaseWeaponAttackSpeed(bot), resolveWeaponAttackSpeed(bot),
-                fallbackHitDelayMs, fallbackCooldownMs);
-    }
-
-    static SkillAttackTiming resolveSkillAttackTiming(int rawSkillDelayMs, boolean attackSpeedAdjusted,
-                                                      int baseWeaponAttackSpeed, int effectiveWeaponAttackSpeed,
-                                                      int fallbackHitDelayMs, int fallbackCooldownMs) {
-        if (rawSkillDelayMs <= 0) {
-            return new SkillAttackTiming(fallbackHitDelayMs, fallbackCooldownMs);
-        }
-
-        int adjustedSkillDelayMs = attackSpeedAdjusted
-                ? adjustAttackDelayMillis(rawSkillDelayMs, baseWeaponAttackSpeed, effectiveWeaponAttackSpeed)
-                : rawSkillDelayMs;
-        return new SkillAttackTiming(defaultHitDelayMs(adjustedSkillDelayMs),
-                Math.max(toCooldownMs(adjustedSkillDelayMs), fallbackCooldownMs));
-    }
-
-    private static int toCooldownMs(int attackDelayMillis) {
-        return BotMovementManager.delayAfterCurrentTick(Math.max(0, attackDelayMillis));
-    }
-
-    private static int defaultHitDelayMs(int animationDelayMs) {
-        if (animationDelayMs <= 0) {
-            return 305;
-        }
-        return Math.max(0, animationDelayMs / 2);
-    }
-
-    private static int resolveWeaponAttackSpeed(Character bot) {
-        return resolveEffectiveAttackSpeed(resolveBaseWeaponAttackSpeed(bot), bot);
-    }
-
-    private static int resolveBaseWeaponAttackSpeed(Character bot) {
-        Item weapon = bot.getInventory(InventoryType.EQUIPPED).getItem((short) -11);
-        if (weapon == null) {
-            return 4;
-        }
-
-        BotAttackDataProvider.NormalAttackProfile attackProfile =
-                BotAttackDataProvider.getInstance().getNormalAttackProfile(weapon.getItemId());
-        if (attackProfile == null) {
-            return 4;
-        }
-
-        return attackProfile.getAttackSpeed();
-    }
-
-    private static int normalizeAttackSpeed(int attackSpeed) {
-        if (attackSpeed <= 0) {
-            return 4;
-        }
-        return attackSpeed;
-    }
-
-    private static int resolveEffectiveAttackSpeed(int baseAttackSpeed, Character bot) {
-        int normalizedBaseSpeed = normalizeAttackSpeed(baseAttackSpeed);
-        if (bot == null) {
-            return normalizedBaseSpeed;
-        }
-
-        Integer booster = bot.getBuffedValue(BuffStat.BOOSTER);
-        if (booster == null) {
-            return normalizedBaseSpeed;
-        }
-
-        return Math.max(2, normalizedBaseSpeed + booster);
-    }
-
-    private static int adjustAttackDelayMillis(int baseDelayMillis, int baseAttackSpeed, int effectiveAttackSpeed) {
-        if (baseDelayMillis <= 0) {
-            return 0;
-        }
-
-        // Mirror OpenStory Char::get_attackdelay: effectiveDelay = rawDelay / (1.7 - speed/10).
-        // baseDelayMillis is the raw WZ animation duration; divide by the effective speed factor
-        // (which already incorporates any booster offset) to get the actual cooldown.
-        float effectiveSpeedFactor = toAttackSpeedFactor(effectiveAttackSpeed);
-        if (effectiveSpeedFactor <= 0f) {
-            return baseDelayMillis;
-        }
-
-        return Math.max(1, Math.round(baseDelayMillis / effectiveSpeedFactor));
-    }
-
-    private static float toAttackSpeedFactor(int attackSpeed) {
-        return 1.7f - (attackSpeed / 10f);
-    }
-
-    /** Applies monster WDEF/MDEF to raw [min, max] damage. Returns {adjMin, adjMax}. */
-    private static int[] applyMonsterDefense(Character bot, Monster target, int minDmg, int maxDmg, boolean magic) {
-        int D = Math.max(0, target.getLevel() - bot.getLevel());
-        double adjMin, adjMax;
-        if (magic) {
-            int mdef = target.getMdef();
-            adjMax = maxDmg - mdef * 0.5 * (1.0 + 0.01 * D);
-            adjMin = minDmg - mdef * 0.6 * (1.0 + 0.01 * D);
-        } else {
-            int wdef = target.getWdef();
-            double factor = 1.0 - 0.01 * D;
-            adjMax = maxDmg * factor - wdef * 0.5;
-            adjMin = minDmg * factor - wdef * 0.6;
-        }
-        int adjMinI = Math.max(1, (int) adjMin);
-        int adjMaxI = Math.max(adjMinI, (int) adjMax);
-        return new int[]{adjMinI, adjMaxI};
-    }
-
-    private static AbstractDealDamageHandler.AttackTarget makeTarget(Character bot, Monster monster, int hits,
-                                                                     int minDmg, int maxDmg, int hitDelayMs,
-                                                                     boolean magicAttack) {
-        List<Integer> lines = BotCombatFormulaProvider.getInstance()
-                .rollDamageLines(bot, monster, hits, minDmg, maxDmg, magicAttack);
-        int normalizedHitDelay = Math.max(0, Math.min(Short.MAX_VALUE, hitDelayMs));
-        return new AbstractDealDamageHandler.AttackTarget((short) normalizedHitDelay, lines);
+    private static BotAttackExecutionProvider.BasicAttackData buildBasicAttackData(Character bot, Monster primaryTarget) {
+        return BotAttackExecutionProvider.buildBasicAttackData(bot, primaryTarget.getPosition());
     }
 
     static String describeDebugStats(BotEntry entry, Character bot) {
@@ -1126,8 +857,8 @@ class BotCombatManager {
         }
 
         AttackPlan plan = target != null ? planAttack(entry, bot, target) : null;
-        String route = plan != null ? plan.route.name().toLowerCase() : determineBasicAttackRoute(bot).name().toLowerCase();
-        int speed = plan != null ? plan.speed : resolveWeaponAttackSpeed(bot);
+        String route = plan != null ? plan.route.name().toLowerCase() : BotAttackExecutionProvider.determineBasicAttackRoute(bot).name().toLowerCase();
+        int speed = plan != null ? plan.speed : BotAttackExecutionProvider.buildBasicAttackData(bot, bot.getPosition()).speed();
         double cooldownSeconds = (plan != null ? plan.cooldownMs : 0) / 1000.0;
         double remainingSeconds = entry.attackCooldownMs / 1000.0;
         String targetName = target != null ? target.getName() : "none";
@@ -1176,7 +907,13 @@ class BotCombatManager {
         if (dur > 0) {
             entry.nextBuffAt.put(skill.getId(), now + (long) (dur * 0.9));
         }
-        entry.attackCooldownMs = Math.max(entry.attackCooldownMs, toCooldownMs(resolveSkillAttackDelayMillis(skill)));
+        BotAttackExecutionProvider.BasicAttackData fallbackAttackData =
+                BotAttackExecutionProvider.buildBasicAttackData(bot, bot.getPosition());
+        String action = BotAttackExecutionProvider.resolveSkillAttackAction(bot, skill, bot.getSkillLevel(skill),
+                BotAttackExecutionProvider.getEquippedWeaponType(bot));
+        BotAttackExecutionProvider.SkillAttackTiming skillTiming =
+                BotAttackExecutionProvider.resolveSkillAttackTiming(skill, action, bot, fallbackAttackData);
+        entry.attackCooldownMs = Math.max(entry.attackCooldownMs, skillTiming.cooldownMs());
         if (fx.getCooldown() > 0) {
             bot.addCooldown(skill.getId(), now, fx.getCooldown() * 1000L);
         }
