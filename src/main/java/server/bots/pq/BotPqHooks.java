@@ -12,7 +12,9 @@ import java.util.List;
  * BotManager calls {@link #tick} once per bot tick; each PQ class handles its own map range.
  */
 public final class BotPqHooks {
-    private static final List<BotScript> SCRIPTS = List.of(BotKpqStage1.script());
+    private static final List<BotScript> SCRIPTS = List.of(
+            BotKpqStage1.script(),
+            BotKpqPuzzleStages.script());
 
     private BotPqHooks() {}
 
